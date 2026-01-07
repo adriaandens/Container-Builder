@@ -40,7 +40,7 @@ class Container::Layer::SingleFile :isa(Container::Layer) {
 	}
 
 	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar+gzip" }
-	method get_digest() { return $digest }
+	method get_digest() { return lc($digest) }
 	method get_size() { return $size }
 }
 
@@ -48,9 +48,15 @@ class Container::Layer::DebianPackage :isa(Container::Layer) { }
 
 class Container::Layer::Dir :isa(Container::Layer) { }
 
+class Container::Config {
+	method generate_config() {
+		return '{"a json file": "containing the commands etc..."}'
+	}
+}
+
 class Container::Manifest {
-	method generate_manifest($digest, $size, @layers) {
-		my $json = '{ "schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json", "config": { "mediaType": "application/vnd.oci.image.config.v1+json", "digest": "' . $digest . '", "size": ' . $size .' }, "layers": [';
+	method generate_manifest($config_digest, $config_size, @layers) {
+		my $json = '{ "schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json", "config": { "mediaType": "application/vnd.oci.image.config.v1+json", "digest": "' . $config_digest . '", "size": ' . $config_size .' }, "layers": [';
 		my @layer_strings = ();
 		foreach(@layers) {
 			push @layer_strings, '{ "mediaType": "' . $_->get_media_type() . '", "digest": "' . $_->get_digest() . '", "size": ' . $_->get_size() . ' }';
@@ -61,11 +67,25 @@ class Container::Manifest {
 	}
 }
 
+# https://specs.opencontainers.org/image-spec/image-index/?v=v1.1.1
+class Container::Index {
+	method generate_index() {
+		return '{"schemaVersion":2,"manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:335a1c878c387eaa18b9a94db4e08a617075192d152258e168a90e09d01e62bc","size":2310,"annotations":{"org.opencontainers.image.ref.name":"localhost/kribbel:naive"}}]}'
+	}
+}
+
 class Container::Builder {
 	field $os = 'debian';
 	field $arch = 'x86_64';
 	field $os_version = 'bookworm';
 	field @layers = ();
+	field $build_dir :param = '/tmp';
+
+	ADJUST {
+		$build_dir .= '/ctrbuilder_' . time();
+		my $success = mkdir($build_dir, 0700);
+		die "Unable to create build dir $build_dir\n" if !$success;
+	}
 
 	# Create a layer that adds a package to the container
 	method add_package {
@@ -111,9 +131,17 @@ class Container::Builder {
 	}
 
 	method build {
+		open(my $f, '>', 'oci-layout') or die "Cannot write oci-layout file\n";
+		print $f '{"imageLayoutVersion": "1.0.0"}';
+		close $f;
+
 		foreach(@layers) {
 			my $artifact_path = $_->generate_artifact();
+			say "Artifact size: " . $_->get_size();
+			say "Artifact digest: " . $_->get_digest();
 		}
+		my $config = Container::Config->new();
+		my $manifest = Container::Manifest->new();
 	}
 }
 
