@@ -12,7 +12,7 @@ use DateTime;
 use Crypt::Digest::SHA256 qw(sha256_hex sha256_file_hex);
 
 class Container::Layer {
-	field $blob_dir :param;
+	field $blob_dir :param :reader(get_blob_dir);
 
 	# This method is called in the builder to generate the artifact (bytes on disk) that will be put in the container image
 	method generate_artifact() { }
@@ -37,15 +37,15 @@ class Container::Layer::SingleFile :isa(Container::Layer) {
 		die "Unable to read file $file\n" if !-r $file;
 		# TODO: Probably need to make the directory where we put TARs configurable
 		my $shasum = Crypt::Digest::SHA256::sha256_file_hex($file);
-		my $success = Archive::Tar->create_archive( $blob_dir . $shasum, 1, $file );
+		my $success = Archive::Tar->create_archive( $self->get_blob_dir() . $shasum, 1, $file ); # the number controls gzip compression
 		if(!$success) {
 			die "Unable to make TAR file from $file\n";
 		}
 		$digest = 'sha256:' . $shasum;
-		$size = (stat($blob_dir . $shasum))[7];
+		$size = (stat($self->get_blob_dir() . $shasum))[7];
 		
 		$generated_artifact = 1;
-		return $blob_dir . $shasum;
+		return $self->get_blob_dir() . $shasum;
 	}
 
 	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar+gzip" }
@@ -62,6 +62,7 @@ class Container::Config {
 	field $size = '';
 
 	method generate_config($user = 'root', $env = [], $cmd = [], $working_dir = '/', $layers = []) {
+		# TODO: if we want to make deterministic oci images, we should remove these create dates so it's gonna be byte-per-byte the same no matter when you make the image.
 		my $json = ' { "created": "' . DateTime->now() . 'Z", ';# Optional https://datatracker.ietf.org/doc/html/rfc3339#section-5.6
 		$json .= '"architecture": "amd64",'; # required, see https://go.dev/doc/install/source#environment for values TODO: make as parameter
 		$json .= '"os": "linux",'; # required, TODO: make as parameter
@@ -70,16 +71,16 @@ class Container::Config {
 		$json .= '"Env": [';
 		$json .= join(',', map { '"' . $_ . '"' } @$env);
         $json .= '],';
-        $json .= '"Cmd": ['
+        $json .= '"Cmd": [';
 		$json .= join(',', map { '"' . $_ . '"' } @$cmd);
-        $json .= '],'
+        $json .= '],';
         $json .= '"WorkingDir": "' . $working_dir . '",';
-		$json .= '},'
+		$json .= '},';
 		$json .= '"rootfs": {';
         $json .= '"type": "layers",';
         $json .= '"diff_ids": [';
 		$json .= join(',', map { '"' . $_->get_digest() . '"' } @$layers);
-        $json . ']}}';
+        $json .= ']}}';
 
 		$digest = 'sha256:' . Crypt::Digest::SHA256::sha256_hex($json);
 		$size = length($json);
@@ -187,12 +188,12 @@ class Container::Builder {
 			say "Artifact digest: " . $_->get_digest();
 		}
 		my $config = Container::Config->new();
-		my $config_json = $config->generate_config($user = 'root', $env = [], $cmd = [], $working_dir = '/', $layers = \@layers);
+		my $config_json = $config->generate_config('root',[], [], '/', \@layers);
 		my $manifest = Container::Manifest->new();
 
-		my $index = Container::Index->new()
+		my $index = Container::Index->new();
 		open($f, '>', $build_dir . 'index.json') or die "Cannot open index.json for writing\n";
-		print $f $index->generate_manifest($manifest->get_digest(), $manifest->get_size());
+		print $f $index->generate_index($manifest->get_digest(), $manifest->get_size());
 		close($f);
 	}
 }
