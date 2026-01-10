@@ -36,16 +36,15 @@ class Container::Layer::SingleFile :isa(Container::Layer) {
 	method generate_artifact() {
 		die "Unable to read file $file\n" if !-r $file;
 		# TODO: Probably need to make the directory where we put TARs configurable
-		my $shasum = Crypt::Digest::SHA256::sha256_file_hex($file);
-		my $success = Archive::Tar->create_archive( $self->get_blob_dir() . $shasum, 1, $file ); # the number controls gzip compression
+		$digest = Crypt::Digest::SHA256::sha256_file_hex($file);
+		my $success = Archive::Tar->create_archive( $self->get_blob_dir() . $digest, 1, $file ); # the number controls gzip compression
 		if(!$success) {
 			die "Unable to make TAR file from $file\n";
 		}
-		$digest = 'sha256:' . $shasum;
-		$size = (stat($self->get_blob_dir() . $shasum))[7];
+		$size = (stat($self->get_blob_dir() . $digest))[7];
 		
 		$generated_artifact = 1;
-		return $self->get_blob_dir() . $shasum;
+		return $self->get_blob_dir() . $digest;
 	}
 
 	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar+gzip" }
@@ -74,15 +73,15 @@ class Container::Config {
         $json .= '"Cmd": [';
 		$json .= join(',', map { '"' . $_ . '"' } @$cmd);
         $json .= '],';
-        $json .= '"WorkingDir": "' . $working_dir . '",';
+        $json .= '"WorkingDir": "' . $working_dir . '"';
 		$json .= '},';
 		$json .= '"rootfs": {';
         $json .= '"type": "layers",';
         $json .= '"diff_ids": [';
-		$json .= join(',', map { '"' . $_->get_digest() . '"' } @$layers);
+		$json .= join(',', map { '"sha256:' . $_->get_digest() . '"' } @$layers);
         $json .= ']}}';
 
-		$digest = 'sha256:' . Crypt::Digest::SHA256::sha256_hex($json);
+		$digest = Crypt::Digest::SHA256::sha256_hex($json);
 		$size = length($json);
 		return $json;
 	}
@@ -96,11 +95,11 @@ class Container::Manifest {
 	field $size = '';
 
 	method generate_manifest($config_digest, $config_size, $layers) {
-		my $json = '{ "schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json", "config": { "mediaType": "application/vnd.oci.image.config.v1+json", "digest": "' . $config_digest . '", "size": ' . $config_size .' }, "layers": [';
-		$json .= join(',', map { '{ "mediaType": "' . $_->get_media_type() . '", "digest": "' . $_->get_digest() . '", "size": ' . $_->get_size() . ' }' } @$layers);
+		my $json = '{ "schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json", "config": { "mediaType": "application/vnd.oci.image.config.v1+json", "digest": "sha256:' . $config_digest . '", "size": ' . $config_size .' }, "layers": [';
+		$json .= join(',', map { '{ "mediaType": "' . $_->get_media_type() . '", "digest": "sha256:' . $_->get_digest() . '", "size": ' . $_->get_size() . ' }' } @$layers);
 		$json .= ' ], "annotations": { "generator": "Container::Builder vX.Y", "generator_url": "a link to (meta)cpan" } }';
 
-		$digest = 'sha256:' . Crypt::Digest::SHA256::sha256_hex($json);
+		$digest = Crypt::Digest::SHA256::sha256_hex($json);
 		$size = length($json);
 		return $json;
 	}
@@ -113,7 +112,7 @@ class Container::Manifest {
 class Container::Index {
 	method generate_index($manifest_digest, $manifest_size) {
 		# TODO: you can annotate and pass the container name
-		return '{"schemaVersion":2,"manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"' . $manifest_digest . '","size":' . $manifest_size . '}}]}'
+		return '{"schemaVersion":2,"manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:' . $manifest_digest . '","size":' . $manifest_size . '}]}'
 	}
 }
 
@@ -188,13 +187,26 @@ class Container::Builder {
 			say "Artifact digest: " . $_->get_digest();
 		}
 		my $config = Container::Config->new();
-		my $config_json = $config->generate_config('root',[], [], '/', \@layers);
+		my $config_json = $config->generate_config('adri', [], [], '/', \@layers);
+		open($f, '>', $build_dir . 'blobs/sha256/' . $config->get_digest()) or die "Cannot open the config file for writing\n";
+		print $f $config_json;
+		close($f);
+
 		my $manifest = Container::Manifest->new();
+		my $manifest_json = $manifest->generate_manifest($config->get_digest(), $config->get_size(), \@layers);
+		open($f, '>', $build_dir . 'blobs/sha256/' . $manifest->get_digest()) or die "Cannot open the manifest file for writing\n";
+		print $f $manifest_json;
+		close($f);
 
 		my $index = Container::Index->new();
 		open($f, '>', $build_dir . 'index.json') or die "Cannot open index.json for writing\n";
 		print $f $index->generate_index($manifest->get_digest(), $manifest->get_size());
 		close($f);
+
+		chdir($build_dir);
+		my @filelist = ('oci-layout', 'index.json', 'blobs', 'blobs/sha256', 'blobs/sha256/' . $config->get_digest(), 'blobs/sha256/' . $manifest->get_digest());
+		push @filelist, map { 'blobs/sha256/' . $_->get_digest() } @layers;
+		Archive::Tar->create_archive('hehe.tar', 1, @filelist);
 	}
 }
 
