@@ -1,14 +1,25 @@
 use v5.40;
 use feature 'class';
+use feature 'defer';
 no warnings 'experimental::class';
+no warnings 'experimental::defer';
 
 # Big TODO:
 # * Instead of concatenating a JSON string (many issues with escaping characters, injections, ...) make an object and let a Perl module handle this.
 # * Be more flexible in what it can generate (currently fixed debian, amd64, ...)
 # * Do a lot more input checking on input from the User like the environment variables, CMD, username that runs, ...
+# * Maybe remove the /usr/share/doc/ files from the archives since it's an execute-only container, there's no tools to view docs anyway...
+# * Make the builder generate the same artifacts every time, so no "created" dates etc. but a byte-per-byte exact archive with the same input. (Also remove Builder version)
+#   * This also implies controlling all dates from all files in the TAR.
+# * Make the builder "date" aware. When passed a certain date (< today), we want to "see" the Debian packages that were available back then, not the latest ones that are available today. Effectively allowing you to go back in time and regenerate the exact image as you did on date X.
 
+use Archive::Ar;
 use Archive::Tar;
+use IO::Uncompress::UnXz qw(unxz); # Uncompress the XZ (only tar+gzip is supported in OCI spec)
+use IO::Compress::Gzip qw(gzip); # Recompress as GZIP (supported by OCI spec)
+use Cwd;
 use DateTime;
+use File::Copy;
 use Crypt::Digest::SHA256 qw(sha256_hex sha256_file_hex);
 
 class Container::Layer {
@@ -25,7 +36,23 @@ class Container::Layer {
 
 class Container::Layer::Tar :isa(Container::Layer) {}
 
-class Container::Layer::TarGzip :isa(Container::Layer) {}
+class Container::Layer::TarGzip :isa(Container::Layer) {
+	field $file :param;
+	field $size = 0;
+	field $digest = 0;
+
+	method generate_artifact() {
+		die "Unable to read file $file\n" if !-r $file;
+		$digest = Crypt::Digest::SHA256::sha256_file_hex($file);
+		File::Copy::copy($file, $self->get_blob_dir() . $digest);
+		$size = (stat($self->get_blob_dir() . $digest))[7];
+		return $self->get_blob_dir() . $digest;
+	}
+
+	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar+gzip" }
+	method get_digest() { return lc($digest) }
+	method get_size() { return $size }
+}
 
 class Container::Layer::SingleFile :isa(Container::Layer) {
 	field $file :param;
@@ -52,7 +79,33 @@ class Container::Layer::SingleFile :isa(Container::Layer) {
 	method get_size() { return $size }
 }
 
-class Container::Layer::DebianPackage :isa(Container::Layer) { }
+class Container::Layer::DebianPackageFile :isa(Container::Layer) { 
+	field $file :param;
+	field $size = 0;
+	field $digest = 0;
+
+	method generate_artifact() {
+		die "Unable to read file $file\n" if !-r $file;
+		my $ar = Archive::Ar->new($file);
+		# TODO: support data.tar, data.tar.gz, data.tgz, ...
+		die "Unable to find data.tar.xz inside deb package\n" if !$ar->contains_file('data.tar.xz');
+		$ar->extract_file('data.tar.xz');
+		# TODO: we should probably be dropping these in work_dir from Container::Config ? and not in the cwd ?
+		IO::Uncompress::UnXz::unxz('data.tar.xz' => 'data.tar') or die "Unable to extract data.tar from data.tar.xz\n";
+		IO::Compress::Gzip::gzip('data.tar' => 'data.tar.gz') or die "Unable to gzip data.tar into data.tar.gz\n";
+		unlink('data.tar'); unlink('data.tar.xz'); # TODO: Instead of dying above, we need to cleanup the files we make...
+
+		# Now that we have our tar+gzip file, we basically have our layer so we just move and rename it.
+		$digest = Crypt::Digest::SHA256::sha256_file_hex('data.tar.gz');
+		File::Copy::move("data.tar.gz", $self->get_blob_dir() . $digest);
+		$size = (stat($self->get_blob_dir() . $digest))[7];
+		return $self->get_blob_dir() . $digest;
+	}
+
+	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar+gzip" }
+	method get_digest() { return lc($digest) }
+	method get_size() { return $size }
+}
 
 class Container::Layer::Dir :isa(Container::Layer) { }
 
@@ -118,31 +171,37 @@ class Container::Index {
 
 class Container::Builder {
 	field $os = 'debian';
-	field $arch = 'x86_64';
+	field $arch = 'amd64';
 	field $os_version = 'bookworm';
 	field @layers = ();
 	field $build_dir :param = '/tmp';
+	field $work_dir :param = '/tmp';
+	field $original_dir = Cwd::getcwd();
 
 	ADJUST {
-		$build_dir .= '/ctrbuilder_' . time() . '/';
-		my $success = mkdir($build_dir, 0700);
-		die "Unable to create build dir $build_dir\n" if !$success;
+		# Create build dir
+		$work_dir .= '/ctrbuilder_' . time() . '/';
+		my $success = mkdir($work_dir, 0700);
+		die "Unable to create build dir $work_dir\n" if !$success;
+		$build_dir = $work_dir . 'build/';
+		$success = mkdir($build_dir, 0700);
+		die "Unable to create build dir $build_dir/build\n" if !$success;
 		$success = mkdir($build_dir . 'blobs/', 0700);
-		die "Unable to create build dir $build_dir/blobs\n" if !$success;
+		die "Unable to create build dir $build_dir/build/blobs\n" if !$success;
 		$success = mkdir($build_dir . 'blobs/' . 'sha256/', 0700);
-		die "Unable to create build dir $build_dir/blobs/sha256\n" if !$success;
+		die "Unable to create build dir $build_dir/build/blobs/sha256\n" if !$success;
 	}
 
 	# Create a layer that adds a package to the container
-	method add_package {
-
+	method add_deb_package_from_file($filepath_deb) {
+		die "Unable to read $filepath_deb\n" if !-r $filepath_deb;
+		push @layers, Container::Layer::DebianPackageFile->new(blob_dir => $build_dir . 'blobs/sha256/', file => $filepath_deb);
 	}
 
 	# Create a layer that has one file
 	method add_file($filepath) {
 		die "Cannot read file at $filepath\n" if !-r $filepath;
-		my $file_layer = Container::Layer::SingleFile->new(blob_dir => $build_dir . 'blobs/sha256/', file => $filepath);
-		push @layers, $file_layer;
+		push @layers, Container::Layer::SingleFile->new(blob_dir => $build_dir . 'blobs/sha256/', file => $filepath);
 	}
 
 	# Create a layer that creates a directory in the container
@@ -203,13 +262,17 @@ class Container::Builder {
 		print $f $index->generate_index($manifest->get_digest(), $manifest->get_size());
 		close($f);
 
-		chdir($build_dir);
+		chdir($build_dir); defer { chdir($original_dir) }
 		my @filelist = ('oci-layout', 'index.json', 'blobs', 'blobs/sha256', 'blobs/sha256/' . $config->get_digest(), 'blobs/sha256/' . $manifest->get_digest());
 		push @filelist, map { 'blobs/sha256/' . $_->get_digest() } @layers;
 		Archive::Tar->create_archive('hehe.tar', 1, @filelist);
+
+		# TODO: Move the TAR file to the local directory from where we started executing this script?
+		# TODO: cleanup everything but the resulting TAR archive with the image...
 	}
 }
 
 my $builder = Container::Builder->new();
 $builder->add_file('README.md');
+$builder->add_deb_package_from_file('zlib1g_1.2.13.dfsg-1_amd64.deb');
 $builder->build();
