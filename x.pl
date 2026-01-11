@@ -107,7 +107,72 @@ class Container::Layer::DebianPackageFile :isa(Container::Layer) {
 	method get_size() { return $size }
 }
 
-class Container::Layer::Dir :isa(Container::Layer) { }
+# Our own implementation for creating directories because Archive::Tar doesn't allow us to do this.
+# It supports adding data via "add_data()" but this doesn't set the correct options in Archive::Tar::File
+# since it's instantiated as a file with data Archive::Tar::File->new(data => $filename, $data, $options)
+# which in that class does not check the options because we're passing data...
+# 
+# So here we are making TAR files from scratch...
+class Container::Builder::Tar {
+
+	# returns a valid tar file as a string
+	method create_dir_tar($path, $mode, $uid, $gid) {
+		die "Path is longer than 98 chars" if length($path) > 98;
+		die "Mode is too long" if length(sprintf("%07o", int($mode))) > 7;
+		die "Uid is too long" if length(sprintf("%07o", int($uid))) > 7;
+		die "Gid is too long" if length(sprintf("%07o", int($gid))) > 7;
+		my $tar = $path . "\x00" x (99-length($path)); #  char name[100];               /*   0 */
+		$tar .= sprintf("%07o", int($mode)) . "\x00"; #  char mode[8];                 /* 100 */
+		$tar .= sprintf("%07o", int($uid)) . "\x00"; #  char uid[8];                  /* 108 */ -> not sure why we use 6 bytes but that's how other tars do it
+		$tar .= sprintf("%07o", int($gid)) . "\x00"; #  char gid[8];                  /* 116 */ -> not sure why we use 6 bytes but that's how other tars do it
+		$tar .= sprintf("%11o", 0) . "\x00"; #  char size[12];                /* 124 */ -> dir size is always 0...
+		$tar .= sprintf("%11o", time()) . "\x00" #  char mtime[12];               /* 136 */
+		$tar .= "\x00" x 8; #  char chksum[8];               /* 148 */ -> we'll do this later
+#  char typeflag;                /* 156 */
+#  char linkname[100];           /* 157 */
+#  char magic[6];                /* 257 */
+#  char version[2];              /* 263 */
+#  char uname[32];               /* 265 */
+#  char gname[32];               /* 297 */
+#  char devmajor[8];             /* 329 */
+#  char devminor[8];             /* 337 */
+#  char prefix[155];             /* 345 */
+
+		$tar .= "\x00" x 1024; # 2 blocks of zero bytes
+		return $tar;
+	}
+}
+
+class Container::Layer::Directory :isa(Container::Layer) {
+	field $path :param;
+	field $mode :param;
+	field $uid :param;
+	field $gid :param;
+	field $digest = 0;
+	field $size = 0;
+
+	method generate_artifact() {
+		my $tar = Archive::Tar->new();
+		my %options_dir = (type => Archive::Tar::Constant::DIR,	uid => $uid, gid => $gid);
+		my $tar_file = Archive::Tar::File->new(file => $path, \%options_dir);
+		#$tar->add_data($path, '', \%options_dir);
+		$tar->chmod($path, $mode);
+		#$tar->chown($path, 'root', 'root'); # TODO: Archive::Tar options want uname/gname, not UID/GID... -> set in options dict...
+		my $tar_content = $tar->write();
+		$digest = Crypt::Digest::SHA256::sha256_hex($tar_content);
+		$size = length($tar_content);
+		open(my $f, '>', $self->get_blob_dir() . $digest) or die "Cannot open $digest for writing\n";
+		print $f $tar_content;
+		close($f);
+		return $self->get_blob_dir() . $digest;
+
+	}
+
+	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar" }
+	method get_digest() { return lc($digest) }
+	method get_size() { return $size }
+
+}
 
 class Container::Config {
 	field $digest = '';
@@ -205,8 +270,8 @@ class Container::Builder {
 	}
 
 	# Create a layer that creates a directory in the container
-	method create_directory {
-
+	method create_directory($path, $mode, $uid, $gid) {
+		push @layers, Container::Layer::Directory->new(blob_dir => $build_dir . 'blobs/sha256/', path => $path, mode => $mode, uid => $uid, gid => $gid);	
 	}
 
 	# Create a layer that adds a user to the container
@@ -275,4 +340,5 @@ class Container::Builder {
 my $builder = Container::Builder->new();
 $builder->add_file('README.md');
 $builder->add_deb_package_from_file('zlib1g_1.2.13.dfsg-1_amd64.deb');
+$builder->create_directory('.', 0755, 0, 0);
 $builder->build();
