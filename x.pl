@@ -116,28 +116,41 @@ class Container::Layer::DebianPackageFile :isa(Container::Layer) {
 class Container::Builder::Tar {
 
 	# returns a valid tar file as a string
+	# Follows https://www.gnu.org/software/tar/manual/html_node/Standard.html except where I said it doesn't
 	method create_dir_tar($path, $mode, $uid, $gid) {
 		die "Path is longer than 98 chars" if length($path) > 98;
 		die "Mode is too long" if length(sprintf("%07o", int($mode))) > 7;
 		die "Uid is too long" if length(sprintf("%07o", int($uid))) > 7;
 		die "Gid is too long" if length(sprintf("%07o", int($gid))) > 7;
-		my $tar = $path . "\x00" x (99-length($path)); #  char name[100];               /*   0 */
+		my $tar = $path . "\x00" x (100-length($path)); #  char name[100];               /*   0 */
 		$tar .= sprintf("%07o", int($mode)) . "\x00"; #  char mode[8];                 /* 100 */
 		$tar .= sprintf("%07o", int($uid)) . "\x00"; #  char uid[8];                  /* 108 */ -> not sure why we use 6 bytes but that's how other tars do it
 		$tar .= sprintf("%07o", int($gid)) . "\x00"; #  char gid[8];                  /* 116 */ -> not sure why we use 6 bytes but that's how other tars do it
-		$tar .= sprintf("%11o", 0) . "\x00"; #  char size[12];                /* 124 */ -> dir size is always 0...
-		$tar .= sprintf("%11o", time()) . "\x00" #  char mtime[12];               /* 136 */
-		$tar .= "\x00" x 8; #  char chksum[8];               /* 148 */ -> we'll do this later
-#  char typeflag;                /* 156 */
-#  char linkname[100];           /* 157 */
-#  char magic[6];                /* 257 */
-#  char version[2];              /* 263 */
-#  char uname[32];               /* 265 */
-#  char gname[32];               /* 297 */
-#  char devmajor[8];             /* 329 */
-#  char devminor[8];             /* 337 */
-#  char prefix[155];             /* 345 */
+		$tar .= sprintf("%011o", 0) . "\x00"; #  char size[12];                /* 124 */ -> dir size is always 0...
+		$tar .= sprintf("%011o", time()) . "\x00"; #  char mtime[12];               /* 136 */
+		$tar .= "\x20" x 8; #  char chksum[8];               /* 148 */ -> we'll do this later
+		$tar .= "5"; #  char typeflag;                /* 156 */ --> A dir is 5
+		$tar .= "\x00" x 100; #  char linkname[100];           /* 157 */
+		$tar .= "ustar\x00"; #  char magic[6];                /* 257 */
+		$tar .= "00"; #  char version[2];              /* 263 */
+		#$tar .= "ustar\x20\x20\x00";
+		$tar .= "\x00" x 32; #  char uname[32];               /* 265 */
+		$tar .= "\x00" x 32; #  char gname[32];               /* 297 */
+		$tar .= "\x00" x 8; #  char devmajor[8];             /* 329 */
+		$tar .= "\x00" x 8; #  char devminor[8];             /* 337 */
+		$tar .= "\x00" x 155; #  char prefix[155];             /* 345 */
 
+		my $checksum = 0;
+		map { $checksum += ord($_) } split //, $tar;
+		# NOT LIKE THE SPEC!
+		# I don't know why but all tar archives that I look at only use 6 bytes for the checksum instead of 7 + null byte.
+		# When I followed the spec to a tee, it gave errors. When I do the same and make a 6 byte number (no zeroes in front) + null byte + left over space (\x20), it works...
+		# Don't ask me why...
+		my $checksum_str = sprintf("%6o", $checksum);
+		say "Checksum is $checksum_str";
+		$tar =~ s/^(.{148}).{7}/$1.$checksum_str."\x00"/e; # Overwrite checksum bytes
+
+		$tar .= "\x00" x 12; # create a block of 512, the header is 500 bytes.
 		$tar .= "\x00" x 1024; # 2 blocks of zero bytes
 		return $tar;
 	}
@@ -152,20 +165,14 @@ class Container::Layer::Directory :isa(Container::Layer) {
 	field $size = 0;
 
 	method generate_artifact() {
-		my $tar = Archive::Tar->new();
-		my %options_dir = (type => Archive::Tar::Constant::DIR,	uid => $uid, gid => $gid);
-		my $tar_file = Archive::Tar::File->new(file => $path, \%options_dir);
-		#$tar->add_data($path, '', \%options_dir);
-		$tar->chmod($path, $mode);
-		#$tar->chown($path, 'root', 'root'); # TODO: Archive::Tar options want uname/gname, not UID/GID... -> set in options dict...
-		my $tar_content = $tar->write();
+		my $tar = Container::Builder::Tar->new();
+		my $tar_content = $tar->create_dir_tar($path, $mode, $uid, $gid);
 		$digest = Crypt::Digest::SHA256::sha256_hex($tar_content);
 		$size = length($tar_content);
 		open(my $f, '>', $self->get_blob_dir() . $digest) or die "Cannot open $digest for writing\n";
 		print $f $tar_content;
 		close($f);
 		return $self->get_blob_dir() . $digest;
-
 	}
 
 	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar" }
@@ -307,8 +314,8 @@ class Container::Builder {
 
 		foreach(@layers) {
 			my $artifact_path = $_->generate_artifact();
-			say "Artifact size: " . $_->get_size();
-			say "Artifact digest: " . $_->get_digest();
+			#say "Artifact size: " . $_->get_size();
+			#say "Artifact digest: " . $_->get_digest();
 		}
 		my $config = Container::Config->new();
 		my $config_json = $config->generate_config('adri', [], [], '/', \@layers);
@@ -340,5 +347,5 @@ class Container::Builder {
 my $builder = Container::Builder->new();
 $builder->add_file('README.md');
 $builder->add_deb_package_from_file('zlib1g_1.2.13.dfsg-1_amd64.deb');
-$builder->create_directory('.', 0755, 0, 0);
+$builder->create_directory('./', 0755, 0, 0);
 $builder->build();
