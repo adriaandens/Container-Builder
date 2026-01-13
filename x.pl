@@ -348,4 +348,8 @@ my $builder = Container::Builder->new();
 $builder->add_file('README.md');
 $builder->add_deb_package_from_file('zlib1g_1.2.13.dfsg-1_amd64.deb');
 $builder->create_directory('./', 0755, 0, 0);
+$builder->create_directory('./tmp', 01777, 0, 0);
+$builder->create_directory('./root', 0700, 0, 0);
+$builder->create_directory('./home', 0755, 0, 0);
+$builder->create_directory('./home/appie', 0700, 1000, 1000);
 $builder->build();
