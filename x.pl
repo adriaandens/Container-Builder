@@ -249,6 +249,7 @@ class Container::Builder {
 	field $build_dir :param = '/tmp';
 	field $work_dir :param = '/tmp';
 	field $original_dir = Cwd::getcwd();
+	field @groups = ();
 
 	ADJUST {
 		# Create build dir
@@ -288,8 +289,10 @@ class Container::Builder {
 	}
 
 	# Create a layer that adds a group to the container
-	method add_group {
-
+	method add_group($name, $gid) {
+		die "Conflicting with existing group\n" if grep {$_->{name} eq $name || $_->{gid} == $gid } @groups;
+		my %new_group = (name => $name, gid => $gid);
+		push @groups, \%new_group;
 	}
 
 	# similar to USER in Dockerfile
@@ -352,4 +355,9 @@ $builder->create_directory('./tmp', 01777, 0, 0);
 $builder->create_directory('./root', 0700, 0, 0);
 $builder->create_directory('./home', 0755, 0, 0);
 $builder->create_directory('./home/appie', 0700, 1000, 1000);
+$builder->add_group('root', 0);
+$builder->add_group('tty', 5);
+$builder->add_group('staff', 50);
+$builder->add_group('larry', 1337);
+$builder->add_group('nobody', 65000);
 $builder->build();
