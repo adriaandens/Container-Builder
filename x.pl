@@ -56,6 +56,9 @@ class Container::Layer::TarGzip :isa(Container::Layer) {
 
 class Container::Layer::SingleFile :isa(Container::Layer) {
 	field $file :param;
+	field $mode :param;
+	field $user :param;
+	field $group :param;
 	field $generated_artifact = 0;
 	field $size = 0;
 	field $digest = 0;
@@ -151,6 +154,48 @@ class Container::Builder::Tar {
 		$tar =~ s/^(.{148}).{7}/$1.$checksum_str."\x00"/e; # Overwrite checksum bytes
 
 		$tar .= "\x00" x 12; # create a block of 512, the header is 500 bytes.
+		$tar .= "\x00" x 1024; # 2 blocks of zero bytes
+		return $tar;
+	}
+
+	method create_file_tar($filepath, $data, $mode, $uid, $gid) {
+		die "Path is longer than 98 chars" if length($path) > 98;
+		die "Mode is too long" if length(sprintf("%07o", int($mode))) > 7;
+		die "Uid is too long" if length(sprintf("%07o", int($uid))) > 7;
+		die "Gid is too long" if length(sprintf("%07o", int($gid))) > 7;
+		my $tar = $filepath . "\x00" x (100-length($path)); #  char name[100];               /*   0 */
+		$tar .= sprintf("%07o", int($mode)) . "\x00"; #  char mode[8];                 /* 100 */
+		$tar .= sprintf("%07o", int($uid)) . "\x00"; #  char uid[8];                  /* 108 */
+		$tar .= sprintf("%07o", int($gid)) . "\x00"; #  char gid[8];                  /* 116 */ 
+		$tar .= sprintf("%011o", length($data)) . "\x00"; #  char size[12];                /* 124 */ 
+		$tar .= sprintf("%011o", time()) . "\x00"; #  char mtime[12];               /* 136 */
+		$tar .= "\x20" x 8; #  char chksum[8];               /* 148 */ -> we'll do this later
+		$tar .= "0"; #  char typeflag;                /* 156 */ --> A regular file is 0
+		$tar .= "\x00" x 100; #  char linkname[100];           /* 157 */
+		$tar .= "ustar\x00"; #  char magic[6];                /* 257 */
+		$tar .= "00"; #  char version[2];              /* 263 */
+		$tar .= "\x00" x 32; #  char uname[32];               /* 265 */
+		$tar .= "\x00" x 32; #  char gname[32];               /* 297 */
+		$tar .= "\x00" x 8; #  char devmajor[8];             /* 329 */
+		$tar .= "\x00" x 8; #  char devminor[8];             /* 337 */
+		$tar .= "\x00" x 155; #  char prefix[155];             /* 345 */
+
+		my $checksum = 0;
+		map { $checksum += ord($_) } split //, $tar;
+		# NOT LIKE THE SPEC!
+		# I don't know why but all tar archives that I look at only use 6 bytes for the checksum instead of 7 + null byte.
+		# When I followed the spec to a tee, it gave errors. When I do the same and make a 6 byte number (no zeroes in front) + null byte + left over space (\x20), it works...
+		# Don't ask me why...
+		my $checksum_str = sprintf("%6o", $checksum);
+		say "Checksum is $checksum_str";
+		$tar =~ s/^(.{148}).{7}/$1.$checksum_str."\x00"/e; # Overwrite checksum bytes
+
+		$tar .= "\x00" x 12; # create a block of 512, the header is 500 bytes.
+
+		$tar .= $data;
+		my $remainder = length($data) % 512;
+		$tar .= "\x00" x (512 - $remainder);
+
 		$tar .= "\x00" x 1024; # 2 blocks of zero bytes
 		return $tar;
 	}
@@ -265,6 +310,11 @@ class Container::Builder {
 		die "Unable to create build dir $build_dir/build/blobs/sha256\n" if !$success;
 	}
 
+	ADJUST {
+		# Standard layers to generate
+
+	}
+
 	# Create a layer that adds a package to the container
 	method add_deb_package_from_file($filepath_deb) {
 		die "Unable to read $filepath_deb\n" if !-r $filepath_deb;
@@ -272,9 +322,13 @@ class Container::Builder {
 	}
 
 	# Create a layer that has one file
-	method add_file($filepath) {
+	method add_file($filepath, $mode, $user, $group) {
 		die "Cannot read file at $filepath\n" if !-r $filepath;
-		push @layers, Container::Layer::SingleFile->new(blob_dir => $build_dir . 'blobs/sha256/', file => $filepath);
+		push @layers, Container::Layer::SingleFile->new(blob_dir => $build_dir . 'blobs/sha256/', file => $filepath, mode => $mode, user => $user, group => $group);
+	}
+
+	method add_file_from_string($filepath, $data, $mode, $user, $group) {
+
 	}
 
 	# Create a layer that creates a directory in the container
@@ -290,6 +344,8 @@ class Container::Builder {
 
 	# Create a layer that adds a group to the container
 	method add_group($name, $gid) {
+		$name =~ s/[^a-z]//ig;
+		$gid =~ s/[^\d]//g;
 		die "Conflicting with existing group\n" if grep {$_->{name} eq $name || $_->{gid} == $gid } @groups;
 		my %new_group = (name => $name, gid => $gid);
 		push @groups, \%new_group;
@@ -315,11 +371,14 @@ class Container::Builder {
 		print $f '{"imageLayoutVersion": "1.0.0"}';
 		close $f;
 
+		# Generate /etc/group file
+		my $etcgroup = '';
+		map { $etcgroup .= $_->{name} . ':x:' . $_->{gid} . ':' . $/ } @groups;
+		$self->add_file_from_string('/etc/group', $etcgroup, 0644, 0, 0);
 		foreach(@layers) {
 			my $artifact_path = $_->generate_artifact();
-			#say "Artifact size: " . $_->get_size();
-			#say "Artifact digest: " . $_->get_digest();
 		}
+
 		my $config = Container::Config->new();
 		my $config_json = $config->generate_config('adri', [], [], '/', \@layers);
 		open($f, '>', $build_dir . 'blobs/sha256/' . $config->get_digest()) or die "Cannot open the config file for writing\n";
@@ -348,7 +407,7 @@ class Container::Builder {
 }
 
 my $builder = Container::Builder->new();
-$builder->add_file('README.md');
+$builder->add_file('README.md', 0644, 0, 0);
 $builder->add_deb_package_from_file('zlib1g_1.2.13.dfsg-1_amd64.deb');
 $builder->create_directory('./', 0755, 0, 0);
 $builder->create_directory('./tmp', 01777, 0, 0);
