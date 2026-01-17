@@ -56,6 +56,7 @@ class Container::Layer::TarGzip :isa(Container::Layer) {
 
 class Container::Layer::SingleFile :isa(Container::Layer) {
 	field $file :param;
+	field $data :param = undef;
 	field $mode :param;
 	field $user :param;
 	field $group :param;
@@ -64,17 +65,19 @@ class Container::Layer::SingleFile :isa(Container::Layer) {
 	field $digest = 0;
 
 	method generate_artifact() {
-		die "Unable to read file $file\n" if !-r $file;
-		# TODO: Probably need to make the directory where we put TARs configurable
-		$digest = Crypt::Digest::SHA256::sha256_file_hex($file);
-		my $success = Archive::Tar->create_archive( $self->get_blob_dir() . $digest, 1, $file ); # the number controls gzip compression
-		if(!$success) {
-			die "Unable to make TAR file from $file\n";
+		my $tar = Container::Builder::Tar->new();
+		if(!defined($data)) { # We gotta read the file
+			local $/ = undef;
+			open(my $f, '<', $file) or die "Cannot read $file\n";
+			$data = <$f>;
+			close($f);
 		}
-		$size = (stat($self->get_blob_dir() . $digest))[7];
-		
-		$generated_artifact = 1;
-		return $self->get_blob_dir() . $digest;
+		my $tar_content = $tar->create_file_tar($file, $data, $mode, $user, $group);
+		$digest = Crypt::Digest::SHA256::sha256_hex($tar_content);
+		$size = length($tar_content);
+		open(my $t, '>', $self->get_blob_dir() . $digest) or die "Cannot open blob file for writing\n";
+		print $t $tar_content;
+		close($t);
 	}
 
 	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar+gzip" }
@@ -159,11 +162,11 @@ class Container::Builder::Tar {
 	}
 
 	method create_file_tar($filepath, $data, $mode, $uid, $gid) {
-		die "Path is longer than 98 chars" if length($path) > 98;
+		die "Path is longer than 98 chars" if length($filepath) > 98;
 		die "Mode is too long" if length(sprintf("%07o", int($mode))) > 7;
 		die "Uid is too long" if length(sprintf("%07o", int($uid))) > 7;
 		die "Gid is too long" if length(sprintf("%07o", int($gid))) > 7;
-		my $tar = $filepath . "\x00" x (100-length($path)); #  char name[100];               /*   0 */
+		my $tar = $filepath . "\x00" x (100-length($filepath)); #  char name[100];               /*   0 */
 		$tar .= sprintf("%07o", int($mode)) . "\x00"; #  char mode[8];                 /* 100 */
 		$tar .= sprintf("%07o", int($uid)) . "\x00"; #  char uid[8];                  /* 108 */
 		$tar .= sprintf("%07o", int($gid)) . "\x00"; #  char gid[8];                  /* 116 */ 
@@ -408,15 +411,15 @@ class Container::Builder {
 
 my $builder = Container::Builder->new();
 $builder->add_file('README.md', 0644, 0, 0);
-$builder->add_deb_package_from_file('zlib1g_1.2.13.dfsg-1_amd64.deb');
-$builder->create_directory('./', 0755, 0, 0);
-$builder->create_directory('./tmp', 01777, 0, 0);
-$builder->create_directory('./root', 0700, 0, 0);
-$builder->create_directory('./home', 0755, 0, 0);
-$builder->create_directory('./home/appie', 0700, 1000, 1000);
-$builder->add_group('root', 0);
-$builder->add_group('tty', 5);
-$builder->add_group('staff', 50);
-$builder->add_group('larry', 1337);
-$builder->add_group('nobody', 65000);
+#$builder->add_deb_package_from_file('zlib1g_1.2.13.dfsg-1_amd64.deb');
+#$builder->create_directory('./', 0755, 0, 0);
+#$builder->create_directory('./tmp', 01777, 0, 0);
+#$builder->create_directory('./root', 0700, 0, 0);
+#$builder->create_directory('./home', 0755, 0, 0);
+#$builder->create_directory('./home/appie', 0700, 1000, 1000);
+#$builder->add_group('root', 0);
+#$builder->add_group('tty', 5);
+#$builder->add_group('staff', 50);
+#$builder->add_group('larry', 1337);
+#$builder->add_group('nobody', 65000);
 $builder->build();
