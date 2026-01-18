@@ -297,6 +297,7 @@ class Container::Builder {
 	field $build_dir :param = '/tmp';
 	field $work_dir :param = '/tmp';
 	field $original_dir = Cwd::getcwd();
+	field @users = ();
 	field @groups = ();
 
 	ADJUST {
@@ -341,8 +342,13 @@ class Container::Builder {
 
 	# Create a layer that adds a user to the container
 	# this is a wrapper to make a change to passwd?
-	method add_user {
-
+	method add_user($name, $uid, $main_gid, $shell, $homedir) {
+		$name =~ s/[^a-z]//ig;
+		$uid =~ s/[^\d]//g;
+		$main_gid =~ s/[^\d]//g;
+		die "Conflicting user" if grep { $_->{name} eq $name || $_->{uid} == $uid || $_->{gid} == $main_gid } @users;
+		my %new_user = (name => $name, uid => $uid, gid => $main_gid, shell => $shell, homedir => $homedir);
+		push @users, \%new_user;
 	}
 
 	# Create a layer that adds a group to the container
@@ -378,6 +384,13 @@ class Container::Builder {
 		my $etcgroup = '';
 		map { $etcgroup .= $_->{name} . ':x:' . $_->{gid} . ':' . $/ } @groups;
 		$self->add_file_from_string('/etc/group', $etcgroup, 0644, 0, 0);
+		# Generate /etc/passwd file
+		my $etcpasswd = '';
+		# example line: root:x:0:0:root:/root:/bin/bash
+		map { $etcpasswd .= $_->{name} . ':x:' . $_->{uid} . ':' . $_->{gid} . ':' . $_->{name} . ':' . $_->{homedir} . ':' . $_->{shell} } @users;
+		$self->add_file_from_string('/etc/passwd', $etcpasswd, 0644, 0, 0);
+
+		# Add all layers
 		foreach(@layers) {
 			my $artifact_path = $_->generate_artifact();
 		}
@@ -410,16 +423,26 @@ class Container::Builder {
 }
 
 my $builder = Container::Builder->new();
-$builder->add_file('README.md', 0644, 0, 0);
+$builder->create_directory('./', 0755, 0, 0);
+$builder->create_directory('./tmp', 01777, 0, 0);
+$builder->create_directory('./root', 0700, 0, 0);
+$builder->create_directory('./home', 0755, 0, 0);
+$builder->create_directory('./home/larry', 0700, 1337, 1337);
+#$builder->add_file('README.md', 0644, 0, 0);
 #$builder->add_deb_package_from_file('zlib1g_1.2.13.dfsg-1_amd64.deb');
-#$builder->create_directory('./', 0755, 0, 0);
-#$builder->create_directory('./tmp', 01777, 0, 0);
-#$builder->create_directory('./root', 0700, 0, 0);
-#$builder->create_directory('./home', 0755, 0, 0);
-#$builder->create_directory('./home/appie', 0700, 1000, 1000);
-#$builder->add_group('root', 0);
-#$builder->add_group('tty', 5);
-#$builder->add_group('staff', 50);
-#$builder->add_group('larry', 1337);
-#$builder->add_group('nobody', 65000);
+$builder->add_deb_package_from_file('libc-bin_2.36-9+deb12u13_amd64.deb');
+$builder->add_deb_package_from_file('libc6_2.36-9+deb12u13_amd64.deb');
+$builder->add_deb_package_from_file('gcc-12-base_12.2.0-14+deb12u1_amd64.deb');
+$builder->add_deb_package_from_file('libgcc-s1_12.2.0-14+deb12u1_amd64.deb');
+$builder->add_deb_package_from_file('libgomp1_12.2.0-14+deb12u1_amd64.deb');
+$builder->add_deb_package_from_file('libstdc++6_12.2.0-14+deb12u1_amd64.deb');
+$builder->add_deb_package_from_file('ca-certificates_20230311+deb12u1_all.deb');
+$builder->add_group('root', 0);
+$builder->add_group('tty', 5);
+$builder->add_group('staff', 50);
+$builder->add_group('larry', 1337);
+$builder->add_group('nobody', 65000);
+$builder->add_user('root', 0, 0, '/sbin/nologin', '/root');
+$builder->add_user('nobody', 65000, 65000, '/sbin/nologin', '/nohome');
+$builder->add_user('larry', 1337, 1337, '/sbin/nologin', '/home/larry');
 $builder->build();
