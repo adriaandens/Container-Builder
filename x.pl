@@ -34,7 +34,24 @@ class Container::Layer {
 	method get_size() { }
 }
 
-class Container::Layer::Tar :isa(Container::Layer) {}
+class Container::Layer::Tar :isa(Container::Layer) {
+	field $data :param;
+	field $size = 0;
+	field $digest = 0;
+
+	method generate_artifact() {
+		$digest = Crypt::Digest::SHA256::sha256_hex($data);
+		$size = length($data);
+		open(my $f, '>', $self->get_blob_dir() . $digest);
+		print $f $data;
+		close($f);
+		return $self->get_blob_dir() . $digest;
+	}
+
+	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar" }
+	method get_digest() { return lc($digest) }
+	method get_size() { return $size }
+}
 
 class Container::Layer::TarGzip :isa(Container::Layer) {
 	field $file :param;
@@ -55,8 +72,9 @@ class Container::Layer::TarGzip :isa(Container::Layer) {
 }
 
 class Container::Layer::SingleFile :isa(Container::Layer) {
-	field $file :param;
+	field $file :param = undef;
 	field $data :param = undef;
+	field $dest :param;
 	field $mode :param;
 	field $user :param;
 	field $group :param;
@@ -66,13 +84,17 @@ class Container::Layer::SingleFile :isa(Container::Layer) {
 
 	method generate_artifact() {
 		my $tar = Container::Builder::Tar->new();
-		if(!defined($data)) { # We gotta read the file
+		if(!defined($file)) { # We gotta read the file
 			local $/ = undef;
 			open(my $f, '<', $file) or die "Cannot read $file\n";
 			$data = <$f>;
 			close($f);
 		}
-		my $tar_content = $tar->create_file_tar($file, $data, $mode, $user, $group);
+		if(!defined($data)) {
+			$data = ""; # Set data to an empty string if nothing was passed (we want an empty file...)
+		}
+		$tar->add_file($dest, $data, $mode, $user, $group);
+		my $tar_content = $tar->get_tar();
 		$digest = Crypt::Digest::SHA256::sha256_hex($tar_content);
 		$size = length($tar_content);
 		open(my $t, '>', $self->get_blob_dir() . $digest) or die "Cannot open blob file for writing\n";
@@ -120,10 +142,16 @@ class Container::Layer::DebianPackageFile :isa(Container::Layer) {
 # 
 # So here we are making TAR files from scratch...
 class Container::Builder::Tar {
+	field $full_tar = '';
 
-	# returns a valid tar file as a string
-	# Follows https://www.gnu.org/software/tar/manual/html_node/Standard.html except where I said it doesn't
-	method create_dir_tar($path, $mode, $uid, $gid) {
+	method get_tar() {
+		my $str = $full_tar;
+		$str .= "\x00" x 1024; # 2 empty blocks at the end
+		return $str;
+	}
+
+	method add_dir($path, $mode, $uid, $gid) {
+		$path = '.' . $path if $path =~ /^\//;
 		die "Path is longer than 98 chars" if length($path) > 98;
 		die "Mode is too long" if length(sprintf("%07o", int($mode))) > 7;
 		die "Uid is too long" if length(sprintf("%07o", int($uid))) > 7;
@@ -157,11 +185,12 @@ class Container::Builder::Tar {
 		$tar =~ s/^(.{148}).{7}/$1.$checksum_str."\x00"/e; # Overwrite checksum bytes
 
 		$tar .= "\x00" x 12; # create a block of 512, the header is 500 bytes.
-		$tar .= "\x00" x 1024; # 2 blocks of zero bytes
-		return $tar;
+
+		$full_tar .= $tar;
 	}
 
-	method create_file_tar($filepath, $data, $mode, $uid, $gid) {
+	method add_file($filepath, $data, $mode, $uid, $gid) {
+		$filepath = '.' . $filepath if $filepath =~ /^\//; # When given an absolute path, we actually need to make it ./
 		die "Path is longer than 98 chars" if length($filepath) > 98;
 		die "Mode is too long" if length(sprintf("%07o", int($mode))) > 7;
 		die "Uid is too long" if length(sprintf("%07o", int($uid))) > 7;
@@ -199,8 +228,7 @@ class Container::Builder::Tar {
 		my $remainder = length($data) % 512;
 		$tar .= "\x00" x (512 - $remainder);
 
-		$tar .= "\x00" x 1024; # 2 blocks of zero bytes
-		return $tar;
+		$full_tar .= $tar;
 	}
 }
 
@@ -214,7 +242,8 @@ class Container::Layer::Directory :isa(Container::Layer) {
 
 	method generate_artifact() {
 		my $tar = Container::Builder::Tar->new();
-		my $tar_content = $tar->create_dir_tar($path, $mode, $uid, $gid);
+		$tar->add_dir($path, $mode, $uid, $gid);
+		my $tar_content = $tar->get_tar();
 		$digest = Crypt::Digest::SHA256::sha256_hex($tar_content);
 		$size = length($tar_content);
 		open(my $f, '>', $self->get_blob_dir() . $digest) or die "Cannot open $digest for writing\n";
@@ -233,7 +262,7 @@ class Container::Config {
 	field $digest = '';
 	field $size = '';
 
-	method generate_config($user = 'root', $env = [], $cmd = [], $working_dir = '/', $layers = []) {
+	method generate_config($user = 'root', $env = [], $entry = [], $cmd = [], $working_dir = '/', $layers = []) {
 		# TODO: if we want to make deterministic oci images, we should remove these create dates so it's gonna be byte-per-byte the same no matter when you make the image.
 		my $json = ' { "created": "' . DateTime->now() . 'Z", ';# Optional https://datatracker.ietf.org/doc/html/rfc3339#section-5.6
 		$json .= '"architecture": "amd64",'; # required, see https://go.dev/doc/install/source#environment for values TODO: make as parameter
@@ -243,6 +272,9 @@ class Container::Config {
 		$json .= '"Env": [';
 		$json .= join(',', map { '"' . $_ . '"' } @$env);
         $json .= '],';
+		$json .= '"Entrypoint": [';
+		$json .= join(',', map {'"' . $_ . '"' } @$entry);
+		$json .= '],';
         $json .= '"Cmd": [';
 		$json .= join(',', map { '"' . $_ . '"' } @$cmd);
         $json .= '],';
@@ -297,6 +329,11 @@ class Container::Builder {
 	field $build_dir :param = '/tmp';
 	field $work_dir :param = '/tmp';
 	field $original_dir = Cwd::getcwd();
+	field $runas = 'root';
+	field @entry = ();
+	field @cmd = ();
+	field @env = ();
+	field @dirs = ();
 	field @users = ();
 	field @groups = ();
 
@@ -314,11 +351,6 @@ class Container::Builder {
 		die "Unable to create build dir $build_dir/build/blobs/sha256\n" if !$success;
 	}
 
-	ADJUST {
-		# Standard layers to generate
-
-	}
-
 	# Create a layer that adds a package to the container
 	method add_deb_package_from_file($filepath_deb) {
 		die "Unable to read $filepath_deb\n" if !-r $filepath_deb;
@@ -326,18 +358,19 @@ class Container::Builder {
 	}
 
 	# Create a layer that has one file
-	method add_file($filepath, $mode, $user, $group) {
-		die "Cannot read file at $filepath\n" if !-r $filepath;
-		push @layers, Container::Layer::SingleFile->new(blob_dir => $build_dir . 'blobs/sha256/', file => $filepath, mode => $mode, user => $user, group => $group);
+	method add_file($file_on_disk, $location_in_ctr, $mode, $user, $group) {
+		die "Cannot read file at $file_on_disk\n" if !-r $file_on_disk;
+		push @layers, Container::Layer::SingleFile->new(blob_dir => $build_dir . 'blobs/sha256/', file => $file_on_disk, dest => $location_in_ctr, mode => $mode, user => $user, group => $group);
 	}
 
-	method add_file_from_string($filepath, $data, $mode, $user, $group) {
-
+	method add_file_from_string($data, $location_in_ctr, $mode, $user, $group) {
+		push @layers, Container::Layer::SingleFile->new(blob_dir => $build_dir . 'blobs/sha256/', data => $data, dest => $location_in_ctr, mode => $mode, user => $user, group => $group);
 	}
 
 	# Create a layer that creates a directory in the container
 	method create_directory($path, $mode, $uid, $gid) {
-		push @layers, Container::Layer::Directory->new(blob_dir => $build_dir . 'blobs/sha256/', path => $path, mode => $mode, uid => $uid, gid => $gid);	
+		my %dir = (path => $path, mode => $mode, uid => $uid, gid => $gid);
+		push @dirs, \%dir;
 	}
 
 	# Create a layer that adds a user to the container
@@ -361,18 +394,29 @@ class Container::Builder {
 	}
 
 	# similar to USER in Dockerfile
-	method runas_user {
-
+	method runas_user($user) {
+		my $found_user = 0;
+		foreach(@users) {
+			$found_user = 1 if $_->{name} eq $user;
+		}
+		die "Cannot set the USER to $user if it's not part of the users in the container\n" if !$found_user;
+		$runas = $user;
 	}
 
 	# Sets an environment variable, similar to ENV in Dockerfile
-	method set_env {
-
+	method set_env($key, $value) {
+		# TODO: probably needs some escaping for nasty value's or values with an '=', ...
+		push @env, "$key=$value";
 	}
 
 	# Set entrypoint
-	method set_entry {
+	method set_entry(@command_str) {
+		push @entry, shift(@command_str);
+		push @cmd, @command_str;
+	}
 
+	method set_work_dir($workdirectory) {
+		$work_dir = $workdirectory;
 	}
 
 	method build {
@@ -380,15 +424,26 @@ class Container::Builder {
 		print $f '{"imageLayoutVersion": "1.0.0"}';
 		close $f;
 
-		# Generate /etc/group file
-		my $etcgroup = '';
-		map { $etcgroup .= $_->{name} . ':x:' . $_->{gid} . ':' . $/ } @groups;
-		$self->add_file_from_string('/etc/group', $etcgroup, 0644, 0, 0);
-		# Generate /etc/passwd file
-		my $etcpasswd = '';
-		# example line: root:x:0:0:root:/root:/bin/bash
-		map { $etcpasswd .= $_->{name} . ':x:' . $_->{uid} . ':' . $_->{gid} . ':' . $_->{name} . ':' . $_->{homedir} . ':' . $_->{shell} } @users;
-		$self->add_file_from_string('/etc/passwd', $etcpasswd, 0644, 0, 0);
+		# Make 1 layer with all the base files
+		my $tar = Container::Builder::Tar->new();
+
+			foreach(@dirs) {
+				$tar->add_dir($_->{path}, $_->{mode}, $_->{uid}, $_->{gid});
+			}
+
+			# Generate /etc/group file
+			my $etcgroup = '';
+			map { $etcgroup .= $_->{name} . ':x:' . $_->{gid} . ':' . $/ } @groups;
+			$tar->add_file('/etc/group', $etcgroup, 0644, 0, 0);
+
+			# Generate /etc/passwd file
+			my $etcpasswd = '';
+			# example line: root:x:0:0:root:/root:/bin/bash
+			map { $etcpasswd .= $_->{name} . ':x:' . $_->{uid} . ':' . $_->{gid} . ':' . $_->{name} . ':' . $_->{homedir} . ':' . $_->{shell} . $/ } @users;
+			$tar->add_file('/etc/passwd', $etcpasswd, 0644, 0, 0);
+	
+		my $tar_content = $tar->get_tar();
+		unshift @layers, Container::Layer::Tar->new(blob_dir => $build_dir . 'blobs/sha256/', data => $tar_content);
 
 		# Add all layers
 		foreach(@layers) {
@@ -396,7 +451,8 @@ class Container::Builder {
 		}
 
 		my $config = Container::Config->new();
-		my $config_json = $config->generate_config('adri', [], [], '/', \@layers);
+		#method generate_config($user = 'root', $env = [], $entry = [], $cmd = [], $working_dir = '/', $layers = []) {
+		my $config_json = $config->generate_config($runas, \@env, \@entry, \@cmd, $work_dir, \@layers);
 		open($f, '>', $build_dir . 'blobs/sha256/' . $config->get_digest()) or die "Cannot open the config file for writing\n";
 		print $f $config_json;
 		close($f);
@@ -423,13 +479,13 @@ class Container::Builder {
 }
 
 my $builder = Container::Builder->new();
-$builder->create_directory('./', 0755, 0, 0);
-$builder->create_directory('./tmp', 01777, 0, 0);
-$builder->create_directory('./root', 0700, 0, 0);
-$builder->create_directory('./home', 0755, 0, 0);
-$builder->create_directory('./home/larry', 0700, 1337, 1337);
-#$builder->add_file('README.md', 0644, 0, 0);
-#$builder->add_deb_package_from_file('zlib1g_1.2.13.dfsg-1_amd64.deb');
+$builder->create_directory('/', 0755, 0, 0);
+$builder->create_directory('/tmp', 01777, 0, 0);
+$builder->create_directory('/root', 0700, 0, 0);
+$builder->create_directory('/home', 0755, 0, 0);
+$builder->create_directory('/home/larry', 0700, 1337, 1337);
+$builder->create_directory('/etc', 0755, 0, 0);
+$builder->add_file('testproggie', '/home/larry/testproggie', 0700, 1337, 1337); # our executable
 $builder->add_deb_package_from_file('libc-bin_2.36-9+deb12u13_amd64.deb');
 $builder->add_deb_package_from_file('libc6_2.36-9+deb12u13_amd64.deb');
 $builder->add_deb_package_from_file('gcc-12-base_12.2.0-14+deb12u1_amd64.deb');
@@ -445,4 +501,8 @@ $builder->add_group('nobody', 65000);
 $builder->add_user('root', 0, 0, '/sbin/nologin', '/root');
 $builder->add_user('nobody', 65000, 65000, '/sbin/nologin', '/nohome');
 $builder->add_user('larry', 1337, 1337, '/sbin/nologin', '/home/larry');
+$builder->runas_user('larry');
+$builder->set_env('PATH', '/bin:/sbin:/usr/bin:/usr/sbin:/home/larry');
+$builder->set_work_dir('/home/larry');
+$builder->set_entry('./testproggie');
 $builder->build();
