@@ -84,7 +84,7 @@ class Container::Layer::SingleFile :isa(Container::Layer) {
 
 	method generate_artifact() {
 		my $tar = Container::Builder::Tar->new();
-		if(!defined($file)) { # We gotta read the file
+		if(defined($file)) { # We gotta read the file
 			local $/ = undef;
 			open(my $f, '<', $file) or die "Cannot read $file\n";
 			$data = <$f>;
@@ -97,6 +97,7 @@ class Container::Layer::SingleFile :isa(Container::Layer) {
 		my $tar_content = $tar->get_tar();
 		$digest = Crypt::Digest::SHA256::sha256_hex($tar_content);
 		$size = length($tar_content);
+		say "writing file $dest $digest to disk";
 		open(my $t, '>', $self->get_blob_dir() . $digest) or die "Cannot open blob file for writing\n";
 		print $t $tar_content;
 		close($t);
@@ -360,7 +361,17 @@ class Container::Builder {
 	# Create a layer that has one file
 	method add_file($file_on_disk, $location_in_ctr, $mode, $user, $group) {
 		die "Cannot read file at $file_on_disk\n" if !-r $file_on_disk;
-		push @layers, Container::Layer::SingleFile->new(blob_dir => $build_dir . 'blobs/sha256/', file => $file_on_disk, dest => $location_in_ctr, mode => $mode, user => $user, group => $group);
+		say "Adding file $file_on_disk";
+		my $tar = Container::Builder::Tar->new();
+		$tar->add_dir('bin/', 0755, 0, 0);
+		open(my $f, '<', 'testproggie') or die "cannot read testproggie\n";
+		local $/ = undef;
+		my $content = <$f>;
+		close($f);
+		$tar->add_file('bin/testproggie', $content, 0755, 0, 0);
+		my $tar_content = $tar->get_tar();
+		push @layers, Container::Layer::Tar->new(blob_dir => $build_dir . 'blobs/sha256/', data => $tar_content);
+		#push @layers, Container::Layer::SingleFile->new(blob_dir => $build_dir . 'blobs/sha256/', file => $file_on_disk, dest => $location_in_ctr, mode => $mode, user => $user, group => $group);
 	}
 
 	method add_file_from_string($data, $location_in_ctr, $mode, $user, $group) {
@@ -411,6 +422,7 @@ class Container::Builder {
 
 	# Set entrypoint
 	method set_entry(@command_str) {
+		die "Entrypoint/Command list is empty\n" if !@command_str;
 		push @entry, shift(@command_str);
 		push @cmd, @command_str;
 	}
@@ -421,7 +433,8 @@ class Container::Builder {
 
 	method build {
 		open(my $f, '>', $build_dir . 'oci-layout') or die "Cannot write oci-layout file\n";
-		print $f '{"imageLayoutVersion": "1.0.0"}';
+		my $oci_layout = '{"imageLayoutVersion": "1.0.0"}';
+		print $f $oci_layout;
 		close $f;
 
 		# Make 1 layer with all the base files
@@ -469,7 +482,7 @@ class Container::Builder {
 		close($f);
 
 		chdir($build_dir); defer { chdir($original_dir) }
-		my @filelist = ('oci-layout', 'index.json', 'blobs', 'blobs/sha256', 'blobs/sha256/' . $config->get_digest(), 'blobs/sha256/' . $manifest->get_digest());
+		my @filelist = ('oci-layout', 'index.json', 'blobs/', 'blobs/sha256/', 'blobs/sha256/' . $config->get_digest(), 'blobs/sha256/' . $manifest->get_digest());
 		push @filelist, map { 'blobs/sha256/' . $_->get_digest() } @layers;
 		Archive::Tar->create_archive('hehe.tar', 1, @filelist);
 
@@ -480,12 +493,13 @@ class Container::Builder {
 
 my $builder = Container::Builder->new();
 $builder->create_directory('/', 0755, 0, 0);
-$builder->create_directory('/tmp', 01777, 0, 0);
-$builder->create_directory('/root', 0700, 0, 0);
-$builder->create_directory('/home', 0755, 0, 0);
-$builder->create_directory('/home/larry', 0700, 1337, 1337);
-$builder->create_directory('/etc', 0755, 0, 0);
-$builder->add_file('testproggie', '/home/larry/testproggie', 0700, 1337, 1337); # our executable
+$builder->create_directory('bin/', 0755, 0, 0);
+$builder->create_directory('tmp/', 01777, 0, 0);
+$builder->create_directory('root/', 0700, 0, 0);
+$builder->create_directory('home/', 0755, 0, 0);
+$builder->create_directory('home/larry/', 0700, 1337, 1337);
+$builder->create_directory('etc/', 0755, 0, 0);
+$builder->add_file('testproggie', '/bin/testproggie', 0755, 0, 0); # our executable
 $builder->add_deb_package_from_file('libc-bin_2.36-9+deb12u13_amd64.deb');
 $builder->add_deb_package_from_file('libc6_2.36-9+deb12u13_amd64.deb');
 $builder->add_deb_package_from_file('gcc-12-base_12.2.0-14+deb12u1_amd64.deb');
@@ -501,8 +515,8 @@ $builder->add_group('nobody', 65000);
 $builder->add_user('root', 0, 0, '/sbin/nologin', '/root');
 $builder->add_user('nobody', 65000, 65000, '/sbin/nologin', '/nohome');
 $builder->add_user('larry', 1337, 1337, '/sbin/nologin', '/home/larry');
-$builder->runas_user('larry');
-$builder->set_env('PATH', '/bin:/sbin:/usr/bin:/usr/sbin:/home/larry');
-$builder->set_work_dir('/home/larry');
-$builder->set_entry('./testproggie');
+$builder->runas_user('root');
+$builder->set_env('PATH', '/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin');
+$builder->set_work_dir('/');
+$builder->set_entry('/bin/testproggie');
 $builder->build();
