@@ -42,10 +42,7 @@ class Container::Layer::Tar :isa(Container::Layer) {
 	method generate_artifact() {
 		$digest = Crypt::Digest::SHA256::sha256_hex($data);
 		$size = length($data);
-		open(my $f, '>', $self->get_blob_dir() . $digest);
-		print $f $data;
-		close($f);
-		return $self->get_blob_dir() . $digest;
+		return $data;
 	}
 
 	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar" }
@@ -59,7 +56,7 @@ class Container::Layer::TarGzip :isa(Container::Layer) {
 	field $digest = 0;
 
 	method generate_artifact() {
-		die "Unable to read file $file\n" if !-r $file;
+		die "Unable to readdd file $file\n" if !-r $file;
 		$digest = Crypt::Digest::SHA256::sha256_file_hex($file);
 		File::Copy::copy($file, $self->get_blob_dir() . $digest);
 		$size = (stat($self->get_blob_dir() . $digest))[7];
@@ -97,13 +94,10 @@ class Container::Layer::SingleFile :isa(Container::Layer) {
 		my $tar_content = $tar->get_tar();
 		$digest = Crypt::Digest::SHA256::sha256_hex($tar_content);
 		$size = length($tar_content);
-		say "writing file $dest $digest to disk";
-		open(my $t, '>', $self->get_blob_dir() . $digest) or die "Cannot open blob file for writing\n";
-		print $t $tar_content;
-		close($t);
+		return $tar_content;
 	}
 
-	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar+gzip" }
+	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar" }
 	method get_digest() { return lc($digest) }
 	method get_size() { return $size }
 }
@@ -114,7 +108,7 @@ class Container::Layer::DebianPackageFile :isa(Container::Layer) {
 	field $digest = 0;
 
 	method generate_artifact() {
-		die "Unable to read file $file\n" if !-r $file;
+		die "Unable to readdddd file $file\n" if !-r $file;
 		my $ar = Archive::Ar->new($file);
 		# TODO: support data.tar, data.tar.gz, data.tgz, ...
 		die "Unable to find data.tar.xz inside deb package\n" if !$ar->contains_file('data.tar.xz');
@@ -126,9 +120,12 @@ class Container::Layer::DebianPackageFile :isa(Container::Layer) {
 
 		# Now that we have our tar+gzip file, we basically have our layer so we just move and rename it.
 		$digest = Crypt::Digest::SHA256::sha256_file_hex('data.tar.gz');
-		File::Copy::move("data.tar.gz", $self->get_blob_dir() . $digest);
-		$size = (stat($self->get_blob_dir() . $digest))[7];
-		return $self->get_blob_dir() . $digest;
+		open(my $f, '<', 'data.tar.gz') or die "cannot read data.tar.gz\n";
+		local $/ = undef;
+		my $data = <$f>;
+		close($f);
+		$size = length($data);
+		return $data;
 	}
 
 	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar+gzip" }
@@ -182,7 +179,6 @@ class Container::Builder::Tar {
 		# When I followed the spec to a tee, it gave errors. When I do the same and make a 6 byte number (no zeroes in front) + null byte + left over space (\x20), it works...
 		# Don't ask me why...
 		my $checksum_str = sprintf("%6o", $checksum);
-		say "Checksum is $checksum_str";
 		$tar =~ s/^(.{148}).{7}/$1.$checksum_str."\x00"/e; # Overwrite checksum bytes
 
 		$tar .= "\x00" x 12; # create a block of 512, the header is 500 bytes.
@@ -220,14 +216,15 @@ class Container::Builder::Tar {
 		# When I followed the spec to a tee, it gave errors. When I do the same and make a 6 byte number (no zeroes in front) + null byte + left over space (\x20), it works...
 		# Don't ask me why...
 		my $checksum_str = sprintf("%6o", $checksum);
-		say "Checksum is $checksum_str";
 		$tar =~ s/^(.{148}).{7}/$1.$checksum_str."\x00"/e; # Overwrite checksum bytes
 
 		$tar .= "\x00" x 12; # create a block of 512, the header is 500 bytes.
 
 		$tar .= $data;
+		say "length is " . length($data);
 		my $remainder = length($data) % 512;
-		$tar .= "\x00" x (512 - $remainder);
+		say "Remainder is $remainder";
+		$tar .= "\x00" x (512 - $remainder) if $remainder > 0;
 
 		$full_tar .= $tar;
 	}
@@ -247,10 +244,7 @@ class Container::Layer::Directory :isa(Container::Layer) {
 		my $tar_content = $tar->get_tar();
 		$digest = Crypt::Digest::SHA256::sha256_hex($tar_content);
 		$size = length($tar_content);
-		open(my $f, '>', $self->get_blob_dir() . $digest) or die "Cannot open $digest for writing\n";
-		print $f $tar_content;
-		close($f);
-		return $self->get_blob_dir() . $digest;
+		return $tar_content;
 	}
 
 	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar" }
@@ -354,7 +348,7 @@ class Container::Builder {
 
 	# Create a layer that adds a package to the container
 	method add_deb_package_from_file($filepath_deb) {
-		die "Unable to read $filepath_deb\n" if !-r $filepath_deb;
+		die "Unable to readd $filepath_deb\n" if !-r $filepath_deb;
 		push @layers, Container::Layer::DebianPackageFile->new(blob_dir => $build_dir . 'blobs/sha256/', file => $filepath_deb);
 	}
 
@@ -457,34 +451,38 @@ class Container::Builder {
 	
 		my $tar_content = $tar->get_tar();
 		unshift @layers, Container::Layer::Tar->new(blob_dir => $build_dir . 'blobs/sha256/', data => $tar_content);
+		#chdir($build_dir); defer { chdir($original_dir) }
 
+		$tar = Container::Builder::Tar->new();
+		$tar->add_dir('blobs/', 0755, 0, 0);
+		$tar->add_dir('blobs/sha256/', 0755, 0, 0);
 		# Add all layers
 		foreach(@layers) {
-			my $artifact_path = $_->generate_artifact();
+			my $data = $_->generate_artifact();
+			my $digest = $_->get_digest();
+			$tar->add_file('blobs/sha256/' . $digest, $data, 0644, 0, 0);
 		}
 
+		# We need to generate our artifacts before we can call the Config, because we need the sizes and digests of the layers...
 		my $config = Container::Config->new();
-		#method generate_config($user = 'root', $env = [], $entry = [], $cmd = [], $working_dir = '/', $layers = []) {
 		my $config_json = $config->generate_config($runas, \@env, \@entry, \@cmd, $work_dir, \@layers);
-		open($f, '>', $build_dir . 'blobs/sha256/' . $config->get_digest()) or die "Cannot open the config file for writing\n";
-		print $f $config_json;
-		close($f);
+		$tar->add_file('blobs/sha256/' . $config->get_digest(), $config_json, 0644, 0, 0);
 
 		my $manifest = Container::Manifest->new();
 		my $manifest_json = $manifest->generate_manifest($config->get_digest(), $config->get_size(), \@layers);
-		open($f, '>', $build_dir . 'blobs/sha256/' . $manifest->get_digest()) or die "Cannot open the manifest file for writing\n";
-		print $f $manifest_json;
-		close($f);
+		$tar->add_file('blobs/sha256/' . $manifest->get_digest(), $manifest_json, 0644, 0, 0);
 
+		$tar->add_file('oci-layout', $oci_layout, 0644, 0, 0);
 		my $index = Container::Index->new();
-		open($f, '>', $build_dir . 'index.json') or die "Cannot open index.json for writing\n";
-		print $f $index->generate_index($manifest->get_digest(), $manifest->get_size());
-		close($f);
+		$tar->add_file('index.json', $index->generate_index($manifest->get_digest(), $manifest->get_size()), 0644, 0, 0);
 
-		chdir($build_dir); defer { chdir($original_dir) }
-		my @filelist = ('oci-layout', 'index.json', 'blobs/', 'blobs/sha256/', 'blobs/sha256/' . $config->get_digest(), 'blobs/sha256/' . $manifest->get_digest());
-		push @filelist, map { 'blobs/sha256/' . $_->get_digest() } @layers;
-		Archive::Tar->create_archive('hehe.tar', 1, @filelist);
+		open(my $o, '>', 'hehe.tar') or die "cannot open hehe.tar\n";
+		print $o $tar->get_tar();
+		close($o);
+
+		#my @filelist = ('oci-layout', 'index.json', 'blobs/', 'blobs/sha256/', 'blobs/sha256/' . $config->get_digest(), 'blobs/sha256/' . $manifest->get_digest());
+		#push @filelist, map { 'blobs/sha256/' . $_->get_digest() } @layers;
+		#Archive::Tar->create_archive('hehe.tar', 1, @filelist);
 
 		# TODO: Move the TAR file to the local directory from where we started executing this script?
 		# TODO: cleanup everything but the resulting TAR archive with the image...
