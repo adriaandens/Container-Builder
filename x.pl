@@ -91,22 +91,16 @@ class Container::Layer::DebianPackageFile :isa(Container::Layer) {
 	method generate_artifact() {
 		die "Unable to read file $file\n" if !-r $file;
 		my $ar = Archive::Ar->new($file);
-		# TODO: support data.tar, data.tar.gz, data.tgz, ...
+		## TODO: support data.tar, data.tar.gz, data.tgz, ...
 		die "Unable to find data.tar.xz inside deb package\n" if !$ar->contains_file('data.tar.xz');
-		$ar->extract_file('data.tar.xz');
-		# TODO: we should probably be dropping these in work_dir from Container::Config ? and not in the cwd ?
-		IO::Uncompress::UnXz::unxz('data.tar.xz' => 'data.tar') or die "Unable to extract data.tar from data.tar.xz\n";
-		IO::Compress::Gzip::gzip('data.tar' => 'data.tar.gz') or die "Unable to gzip data.tar into data.tar.gz\n";
-		unlink('data.tar'); unlink('data.tar.xz'); # TODO: Instead of dying above, we need to cleanup the files we make...
-
-		# Now that we have our tar+gzip file, we basically have our layer so we just move and rename it.
-		$digest = Crypt::Digest::SHA256::sha256_file_hex('data.tar.gz');
-		open(my $f, '<', 'data.tar.gz') or die "cannot read data.tar.gz\n";
-		local $/ = undef;
-		my $data = <$f>;
-		close($f);
-		$size = length($data);
-		return $data;
+		my $xz_data = $ar->get_data('data.tar.xz');
+		my $unxz_data;
+		IO::Uncompress::UnXz::unxz(\$xz_data => \$unxz_data) or die "Unable to extract data using unxz\n";
+		my $gunzip_compressed_data;
+		IO::Compress::Gzip::gzip(\$unxz_data => \$gunzip_compressed_data) or die "Unable to gunzip the unxz data\n";
+		$size = length($gunzip_compressed_data);
+		$digest = Crypt::Digest::SHA256::sha256_hex($gunzip_compressed_data);
+		return $gunzip_compressed_data;
 	}
 
 	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar+gzip" }
@@ -300,30 +294,15 @@ class Container::Builder {
 	field $arch = 'amd64';
 	field $os_version = 'bookworm';
 	field @layers = ();
-	field $build_dir :param = '/tmp';
-	field $work_dir :param = '/tmp';
 	field $original_dir = Cwd::getcwd();
 	field $runas = 'root';
+	field $work_dir = '/';
 	field @entry = ();
 	field @cmd = ();
 	field @env = ();
 	field @dirs = ();
 	field @users = ();
 	field @groups = ();
-
-	ADJUST {
-		# Create build dir
-		$work_dir .= '/ctrbuilder_' . time() . '/';
-		my $success = mkdir($work_dir, 0700);
-		die "Unable to create build dir $work_dir\n" if !$success;
-		$build_dir = $work_dir . 'build/';
-		$success = mkdir($build_dir, 0700);
-		die "Unable to create build dir $build_dir/build\n" if !$success;
-		$success = mkdir($build_dir . 'blobs/', 0700);
-		die "Unable to create build dir $build_dir/build/blobs\n" if !$success;
-		$success = mkdir($build_dir . 'blobs/' . 'sha256/', 0700);
-		die "Unable to create build dir $build_dir/build/blobs/sha256\n" if !$success;
-	}
 
 	# Create a layer that adds a package to the container
 	method add_deb_package_from_file($filepath_deb) {
@@ -416,7 +395,6 @@ class Container::Builder {
 	
 		my $tar_content = $tar->get_tar();
 		unshift @layers, Container::Layer::Tar->new(data => $tar_content);
-		#chdir($build_dir); defer { chdir($original_dir) }
 
 		$tar = Container::Builder::Tar->new();
 		$tar->add_dir('blobs/', 0755, 0, 0);
@@ -445,8 +423,6 @@ class Container::Builder {
 		open(my $o, '>', 'hehe.tar') or die "cannot open hehe.tar\n";
 		print $o $tar->get_tar();
 		close($o);
-
-		# TODO: cleanup everything but the resulting TAR archive with the image...
 	}
 }
 
