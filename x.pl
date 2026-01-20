@@ -23,8 +23,6 @@ use File::Copy;
 use Crypt::Digest::SHA256 qw(sha256_hex sha256_file_hex);
 
 class Container::Layer {
-	field $blob_dir :param :reader(get_blob_dir);
-
 	# This method is called in the builder to generate the artifact (bytes on disk) that will be put in the container image
 	method generate_artifact() { }
 
@@ -46,24 +44,6 @@ class Container::Layer::Tar :isa(Container::Layer) {
 	}
 
 	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar" }
-	method get_digest() { return lc($digest) }
-	method get_size() { return $size }
-}
-
-class Container::Layer::TarGzip :isa(Container::Layer) {
-	field $file :param;
-	field $size = 0;
-	field $digest = 0;
-
-	method generate_artifact() {
-		die "Unable to readdd file $file\n" if !-r $file;
-		$digest = Crypt::Digest::SHA256::sha256_file_hex($file);
-		File::Copy::copy($file, $self->get_blob_dir() . $digest);
-		$size = (stat($self->get_blob_dir() . $digest))[7];
-		return $self->get_blob_dir() . $digest;
-	}
-
-	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar+gzip" }
 	method get_digest() { return lc($digest) }
 	method get_size() { return $size }
 }
@@ -107,8 +87,9 @@ class Container::Layer::DebianPackageFile :isa(Container::Layer) {
 	field $size = 0;
 	field $digest = 0;
 
+	# TODO: Do this all in memory, don't let any file get written to disk.
 	method generate_artifact() {
-		die "Unable to readdddd file $file\n" if !-r $file;
+		die "Unable to read file $file\n" if !-r $file;
 		my $ar = Archive::Ar->new($file);
 		# TODO: support data.tar, data.tar.gz, data.tgz, ...
 		die "Unable to find data.tar.xz inside deb package\n" if !$ar->contains_file('data.tar.xz');
@@ -221,9 +202,7 @@ class Container::Builder::Tar {
 		$tar .= "\x00" x 12; # create a block of 512, the header is 500 bytes.
 
 		$tar .= $data;
-		say "length is " . length($data);
 		my $remainder = length($data) % 512;
-		say "Remainder is $remainder";
 		$tar .= "\x00" x (512 - $remainder) if $remainder > 0;
 
 		$full_tar .= $tar;
@@ -348,28 +327,18 @@ class Container::Builder {
 
 	# Create a layer that adds a package to the container
 	method add_deb_package_from_file($filepath_deb) {
-		die "Unable to readd $filepath_deb\n" if !-r $filepath_deb;
-		push @layers, Container::Layer::DebianPackageFile->new(blob_dir => $build_dir . 'blobs/sha256/', file => $filepath_deb);
+		die "Unable to read $filepath_deb\n" if !-r $filepath_deb;
+		push @layers, Container::Layer::DebianPackageFile->new(file => $filepath_deb);
 	}
 
 	# Create a layer that has one file
 	method add_file($file_on_disk, $location_in_ctr, $mode, $user, $group) {
 		die "Cannot read file at $file_on_disk\n" if !-r $file_on_disk;
-		say "Adding file $file_on_disk";
-		my $tar = Container::Builder::Tar->new();
-		$tar->add_dir('bin/', 0755, 0, 0);
-		open(my $f, '<', 'testproggie') or die "cannot read testproggie\n";
-		local $/ = undef;
-		my $content = <$f>;
-		close($f);
-		$tar->add_file('bin/testproggie', $content, 0755, 0, 0);
-		my $tar_content = $tar->get_tar();
-		push @layers, Container::Layer::Tar->new(blob_dir => $build_dir . 'blobs/sha256/', data => $tar_content);
-		#push @layers, Container::Layer::SingleFile->new(blob_dir => $build_dir . 'blobs/sha256/', file => $file_on_disk, dest => $location_in_ctr, mode => $mode, user => $user, group => $group);
+		push @layers, Container::Layer::SingleFile->new(file => $file_on_disk, dest => $location_in_ctr, mode => $mode, user => $user, group => $group);
 	}
 
 	method add_file_from_string($data, $location_in_ctr, $mode, $user, $group) {
-		push @layers, Container::Layer::SingleFile->new(blob_dir => $build_dir . 'blobs/sha256/', data => $data, dest => $location_in_ctr, mode => $mode, user => $user, group => $group);
+		push @layers, Container::Layer::SingleFile->new(data => $data, dest => $location_in_ctr, mode => $mode, user => $user, group => $group);
 	}
 
 	# Create a layer that creates a directory in the container
@@ -426,10 +395,6 @@ class Container::Builder {
 	}
 
 	method build {
-		open(my $f, '>', $build_dir . 'oci-layout') or die "Cannot write oci-layout file\n";
-		my $oci_layout = '{"imageLayoutVersion": "1.0.0"}';
-		print $f $oci_layout;
-		close $f;
 
 		# Make 1 layer with all the base files
 		my $tar = Container::Builder::Tar->new();
@@ -450,7 +415,7 @@ class Container::Builder {
 			$tar->add_file('/etc/passwd', $etcpasswd, 0644, 0, 0);
 	
 		my $tar_content = $tar->get_tar();
-		unshift @layers, Container::Layer::Tar->new(blob_dir => $build_dir . 'blobs/sha256/', data => $tar_content);
+		unshift @layers, Container::Layer::Tar->new(data => $tar_content);
 		#chdir($build_dir); defer { chdir($original_dir) }
 
 		$tar = Container::Builder::Tar->new();
@@ -472,7 +437,8 @@ class Container::Builder {
 		my $manifest_json = $manifest->generate_manifest($config->get_digest(), $config->get_size(), \@layers);
 		$tar->add_file('blobs/sha256/' . $manifest->get_digest(), $manifest_json, 0644, 0, 0);
 
-		$tar->add_file('oci-layout', $oci_layout, 0644, 0, 0);
+		my $oci_layout = '{"imageLayoutVersion": "1.0.0"}';
+		$tar->add_file('oci-layout', '{"imageLayoutVersion": "1.0.0"}', 0644, 0, 0);
 		my $index = Container::Index->new();
 		$tar->add_file('index.json', $index->generate_index($manifest->get_digest(), $manifest->get_size()), 0644, 0, 0);
 
@@ -480,11 +446,6 @@ class Container::Builder {
 		print $o $tar->get_tar();
 		close($o);
 
-		#my @filelist = ('oci-layout', 'index.json', 'blobs/', 'blobs/sha256/', 'blobs/sha256/' . $config->get_digest(), 'blobs/sha256/' . $manifest->get_digest());
-		#push @filelist, map { 'blobs/sha256/' . $_->get_digest() } @layers;
-		#Archive::Tar->create_archive('hehe.tar', 1, @filelist);
-
-		# TODO: Move the TAR file to the local directory from where we started executing this script?
 		# TODO: cleanup everything but the resulting TAR archive with the image...
 	}
 }
@@ -513,8 +474,8 @@ $builder->add_group('nobody', 65000);
 $builder->add_user('root', 0, 0, '/sbin/nologin', '/root');
 $builder->add_user('nobody', 65000, 65000, '/sbin/nologin', '/nohome');
 $builder->add_user('larry', 1337, 1337, '/sbin/nologin', '/home/larry');
-$builder->runas_user('root');
+$builder->runas_user('larry');
 $builder->set_env('PATH', '/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin');
 $builder->set_work_dir('/');
-$builder->set_entry('/bin/testproggie');
+$builder->set_entry('testproggie');
 $builder->build();
