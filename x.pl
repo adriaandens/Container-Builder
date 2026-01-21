@@ -17,10 +17,16 @@ use Archive::Ar;
 use Archive::Tar;
 use IO::Uncompress::UnXz qw(unxz); # Uncompress the XZ (only tar+gzip is supported in OCI spec)
 use IO::Compress::Gzip qw(gzip); # Recompress as GZIP (supported by OCI spec)
+use IO::Uncompress::Gunzip qw(gunzip); # Recompress as GZIP (supported by OCI spec)
 use Cwd;
 use DateTime;
 use File::Copy;
 use Crypt::Digest::SHA256 qw(sha256_hex sha256_file_hex);
+use LWP::Protocol::https;
+use LWP::Simple;
+use LWP::UserAgent;
+use DPKG::Parse::Packages;
+use DPKG::Parse::Entry;
 
 class Container::Layer {
 	# This method is called in the builder to generate the artifact (bytes on disk) that will be put in the container image
@@ -303,6 +309,47 @@ class Container::Builder {
 	field @dirs = ();
 	field @users = ();
 	field @groups = ();
+	field $packages; 
+
+	method parse_packages() {
+		if(!-r 'Packages') {
+			say "[+] Downloading Debian Packages";
+			my $packagesgz = LWP::Simple::get("https://debian.inf.tu-dresden.de/debian/dists/bookworm/main/binary-amd64/Packages.gz");
+			IO::Uncompress::Gunzip::gunzip(\$packagesgz => 'Packages');
+		}
+		$packages = DPKG::Parse::Packages->new('filename' => 'Packages');
+		$packages->parse();
+	}
+
+	method add_deb_package($package_name) {
+		$self->parse_packages() if !$packages; # lazy load on first call
+		my $pkg = $packages->get_package('name' => $package_name);
+		return 0 if !$pkg;
+
+		my $filepath = $pkg->filename;
+		my ($filename) = $filepath =~ m/([^\/]+)$/;
+		say "filename is $filename";
+		say "Filepath for package $package_name is $filepath";
+		my $url = "https://debian.inf.tu-dresden.de/debian/" . $filepath;
+		say $url;
+		my $lwp = LWP::UserAgent->new();
+		my $response = $lwp->get($url);
+		if(!$response->is_success) { # Added because my base perl LWP didn't have the https package to support https...
+			say "something went wrong";
+			say $response->status_line;
+		}
+		my $package_content = $response->decoded_content;
+		say "unable to get package content with LWP::Simple" if !$package_content;
+
+		# TODO: Writing packages to disk for caching should be optional (if you're doing 1 build, caching files is useless)
+		if(!-r $filename) {
+			open(my $f, '>', $filename) or die "cannot open $filename\n";
+			print $f $package_content;
+			close($f);
+		}
+		# TODO: need to be able to pass a memory buffer here so we can skip writing to disk
+		push @layers, Container::Layer::DebianPackageFile->new(file => $filename);
+	}
 
 	# Create a layer that adds a package to the container
 	method add_deb_package_from_file($filepath_deb) {
@@ -434,7 +481,7 @@ $builder->create_directory('root/', 0700, 0, 0);
 $builder->create_directory('home/', 0755, 0, 0);
 $builder->create_directory('home/larry/', 0700, 1337, 1337);
 $builder->create_directory('etc/', 0755, 0, 0);
-$builder->add_file('testproggie', '/bin/testproggie', 0755, 0, 0); # our executable
+# C dependencies (to run a compiled executable)
 $builder->add_deb_package_from_file('libc-bin_2.36-9+deb12u13_amd64.deb');
 $builder->add_deb_package_from_file('libc6_2.36-9+deb12u13_amd64.deb');
 $builder->add_deb_package_from_file('gcc-12-base_12.2.0-14+deb12u1_amd64.deb');
@@ -442,6 +489,17 @@ $builder->add_deb_package_from_file('libgcc-s1_12.2.0-14+deb12u1_amd64.deb');
 $builder->add_deb_package_from_file('libgomp1_12.2.0-14+deb12u1_amd64.deb');
 $builder->add_deb_package_from_file('libstdc++6_12.2.0-14+deb12u1_amd64.deb');
 $builder->add_deb_package_from_file('ca-certificates_20230311+deb12u1_all.deb');
+# Perl dependencies (to run a basic Perl program)
+$builder->add_deb_package('libbz2-1.0');
+$builder->add_deb_package('libcrypt1');
+$builder->add_deb_package('libdb5.3');
+$builder->add_deb_package('libgdbm6');
+$builder->add_deb_package('libgdbm-compat4');
+$builder->add_deb_package('zlib1g');
+$builder->add_deb_package('perl-base');
+$builder->add_deb_package('perl-modules-5.36');
+$builder->add_deb_package('libperl5.36');
+$builder->add_deb_package('perl');
 $builder->add_group('root', 0);
 $builder->add_group('tty', 5);
 $builder->add_group('staff', 50);
@@ -453,5 +511,8 @@ $builder->add_user('larry', 1337, 1337, '/sbin/nologin', '/home/larry');
 $builder->runas_user('larry');
 $builder->set_env('PATH', '/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin');
 $builder->set_work_dir('/');
-$builder->set_entry('testproggie');
+#$builder->set_entry('testproggie');
+$builder->set_entry('perl');
+#$builder->add_file('testproggie', '/bin/testproggie', 0755, 0, 0); # our executable
+$builder->add_file('testproggie.pl', '/home/larry/testproggie.pl', 0755, 1337, 1337); # our executable
 $builder->build();
