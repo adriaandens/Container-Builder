@@ -490,16 +490,8 @@ $builder->add_deb_package_from_file('libgomp1_12.2.0-14+deb12u1_amd64.deb');
 $builder->add_deb_package_from_file('libstdc++6_12.2.0-14+deb12u1_amd64.deb');
 $builder->add_deb_package_from_file('ca-certificates_20230311+deb12u1_all.deb');
 # Perl dependencies (to run a basic Perl program)
-$builder->add_deb_package('libbz2-1.0');
 $builder->add_deb_package('libcrypt1');
-$builder->add_deb_package('libdb5.3');
-$builder->add_deb_package('libgdbm6');
-$builder->add_deb_package('libgdbm-compat4');
-$builder->add_deb_package('zlib1g');
 $builder->add_deb_package('perl-base');
-$builder->add_deb_package('perl-modules-5.36');
-$builder->add_deb_package('libperl5.36');
-$builder->add_deb_package('perl');
 $builder->add_group('root', 0);
 $builder->add_group('tty', 5);
 $builder->add_group('staff', 50);
@@ -511,8 +503,6 @@ $builder->add_user('larry', 1337, 1337, '/sbin/nologin', '/home/larry');
 $builder->runas_user('larry');
 $builder->set_env('PATH', '/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin');
 $builder->set_work_dir('/');
-#$builder->set_entry('testproggie');
 $builder->set_entry('perl');
-#$builder->add_file('testproggie', '/bin/testproggie', 0755, 0, 0); # our executable
-$builder->add_file('testproggie.pl', '/home/larry/testproggie.pl', 0755, 1337, 1337); # our executable
+$builder->add_file('testproggie.pl', '/home/larry/testproggie.pl', 0755, 1337, 1337); # our program
 $builder->build();
