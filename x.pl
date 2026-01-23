@@ -357,6 +357,10 @@ class Container::Builder {
 		push @layers, Container::Layer::DebianPackageFile->new(file => $filepath_deb);
 	}
 
+	method extract_from_deb($package_name, $files_to_extract) {
+		# TODO:
+	}
+
 	# Create a layer that has one file
 	method add_file($file_on_disk, $location_in_ctr, $mode, $user, $group) {
 		die "Cannot read file at $file_on_disk\n" if !-r $file_on_disk;
@@ -489,9 +493,17 @@ $builder->add_deb_package_from_file('libgcc-s1_12.2.0-14+deb12u1_amd64.deb');
 $builder->add_deb_package_from_file('libgomp1_12.2.0-14+deb12u1_amd64.deb');
 $builder->add_deb_package_from_file('libstdc++6_12.2.0-14+deb12u1_amd64.deb');
 $builder->add_deb_package_from_file('ca-certificates_20230311+deb12u1_all.deb');
+# SSL support
+$builder->add_deb_package('libssl3');
 # Perl dependencies (to run a basic Perl program)
 $builder->add_deb_package('libcrypt1');
 $builder->add_deb_package('perl-base');
+# CPM dependencies
+# Warning: hacky code :P so we don't import the entire perl modules
+# TODO: extract these from perl-modules deb and put them in _our_ tar file
+my @files_to_extract('./usr/share/perl/5.36.0/PerlIO/', './usr/share/perl/5.36.0/PerlIO/via/', './usr/share/perl/5.36.0/PerlIO/via/QuotedPrint.pm', './usr/share/perl/5.36.0/PerlIO.pm');
+$builder->extract_from_deb('perl-modules', \@files_to_extract);
+$builder->add_deb_package('libperlio-utf8-strict-perl');
 $builder->add_group('root', 0);
 $builder->add_group('tty', 5);
 $builder->add_group('staff', 50);
@@ -504,5 +516,6 @@ $builder->runas_user('larry');
 $builder->set_env('PATH', '/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin');
 $builder->set_work_dir('/');
 $builder->set_entry('perl');
-$builder->add_file('testproggie.pl', '/home/larry/testproggie.pl', 0755, 1337, 1337); # our program
+$builder->add_file('cpm', '/bin/cpm', 0755, 0, 0); # CPAN Package Manager
+#$builder->add_file('testproggie.pl', '/home/larry/testproggie.pl', 0644, 1337, 1337); # our program
 $builder->build();
