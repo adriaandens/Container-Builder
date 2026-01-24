@@ -89,27 +89,48 @@ class Container::Layer::SingleFile :isa(Container::Layer) {
 }
 
 class Container::Layer::DebianPackageFile :isa(Container::Layer) { 
-	field $file :param;
+	field $file :param = "";
+	field $data :param = "";
+	field $compress :param = 1;
 	field $size = 0;
 	field $digest = 0;
 
 	# TODO: Do this all in memory, don't let any file get written to disk.
 	method generate_artifact() {
-		die "Unable to read file $file\n" if !-r $file;
-		my $ar = Archive::Ar->new($file);
+		my $ar;
+		if($file) {
+			die "Unable to read file $file\n" if !-r $file;
+			$ar = Archive::Ar->new($file);
+		} elsif($data) {
+			$ar = Archive::Ar->new();
+			my $result = $ar->read_memory($data);
+			die "Couldn't read Ar archive from memory\n" if(!defined($result));
+		} else {
+			die "No file or data passed to DebianPackageFile\n";
+		}
 		## TODO: support data.tar, data.tar.gz, data.tgz, ...
 		die "Unable to find data.tar.xz inside deb package\n" if !$ar->contains_file('data.tar.xz');
 		my $xz_data = $ar->get_data('data.tar.xz');
 		my $unxz_data;
 		IO::Uncompress::UnXz::unxz(\$xz_data => \$unxz_data) or die "Unable to extract data using unxz\n";
-		my $gunzip_compressed_data;
-		IO::Compress::Gzip::gzip(\$unxz_data => \$gunzip_compressed_data) or die "Unable to gunzip the unxz data\n";
-		$size = length($gunzip_compressed_data);
-		$digest = Crypt::Digest::SHA256::sha256_hex($gunzip_compressed_data);
-		return $gunzip_compressed_data;
+		if($compress) {
+			my $gunzip_compressed_data;
+			IO::Compress::Gzip::gzip(\$unxz_data => \$gunzip_compressed_data) or die "Unable to gunzip the unxz data\n";
+			$size = length($gunzip_compressed_data);
+			$digest = Crypt::Digest::SHA256::sha256_hex($gunzip_compressed_data);
+			return $gunzip_compressed_data;
+		} else {
+			$size = length($unxz_data);
+			$digest = Crypt::Digest::SHA256::sha256_hex($unxz_data);
+			return $unxz_data;
+		}
 	}
 
-	method get_media_type() { return "application/vnd.oci.image.layer.v1.tar+gzip" }
+	method get_media_type() { 
+		my $s = "application/vnd.oci.image.layer.v1.tar";
+		$s .= '+gzip' if $compress;
+		return $s;
+	}
 	method get_digest() { return lc($digest) }
 	method get_size() { return $size }
 }
@@ -206,6 +227,13 @@ class Container::Builder::Tar {
 		$tar .= "\x00" x (512 - $remainder) if $remainder > 0;
 
 		$full_tar .= $tar;
+	}
+
+	method extract_file($tar, $filepath) {
+		# TODO
+		# Read header filename
+		# while it's not our file, check the size and jump + read new header filename
+		# extract data from our file and return
 	}
 }
 
@@ -321,7 +349,7 @@ class Container::Builder {
 		$packages->parse();
 	}
 
-	method add_deb_package($package_name) {
+	method _get_deb_package($package_name) {
 		$self->parse_packages() if !$packages; # lazy load on first call
 		my $pkg = $packages->get_package('name' => $package_name);
 		return 0 if !$pkg;
@@ -335,20 +363,23 @@ class Container::Builder {
 		my $lwp = LWP::UserAgent->new();
 		my $response = $lwp->get($url);
 		if(!$response->is_success) { # Added because my base perl LWP didn't have the https package to support https...
-			say "something went wrong";
-			say $response->status_line;
+			die "Call to Debian package repo failed: " . $response->status_line;
 		}
 		my $package_content = $response->decoded_content;
-		say "unable to get package content with LWP::Simple" if !$package_content;
+		die "unable to get package content with LWP::Simple" if !$package_content;
+		return $package_content;
+	}
 
+	method add_deb_package($package_name) {
+		my $package_content = $self->_get_deb_package($package_name);
 		# TODO: Writing packages to disk for caching should be optional (if you're doing 1 build, caching files is useless)
-		if(!-r $filename) {
-			open(my $f, '>', $filename) or die "cannot open $filename\n";
+		if(!-r $package_name . '.deb') {
+			open(my $f, '>', $package_name . '.deb') or die "cannot open $package_name.deb\n";
 			print $f $package_content;
 			close($f);
 		}
 		# TODO: need to be able to pass a memory buffer here so we can skip writing to disk
-		push @layers, Container::Layer::DebianPackageFile->new(file => $filename);
+		push @layers, Container::Layer::DebianPackageFile->new(file => $package_name . '.deb');
 	}
 
 	# Create a layer that adds a package to the container
@@ -358,7 +389,11 @@ class Container::Builder {
 	}
 
 	method extract_from_deb($package_name, $files_to_extract) {
-		# TODO:
+		my $deb_archive = $self->_get_deb_package($package_name);
+		my $deb = Container::Layer::DebianPackageFile->new(data => $deb_archive, compress => 0);
+		my $tar = $deb->generate_artifact();
+		# Read the tar -> with our own class because Archive::Tar doesn't read from a string...
+		# Extract the files we want
 	}
 
 	# Create a layer that has one file
