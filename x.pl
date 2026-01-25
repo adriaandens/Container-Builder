@@ -95,7 +95,6 @@ class Container::Layer::DebianPackageFile :isa(Container::Layer) {
 	field $size = 0;
 	field $digest = 0;
 
-	# TODO: Do this all in memory, don't let any file get written to disk.
 	method generate_artifact() {
 		my $ar;
 		if($file) {
@@ -231,9 +230,59 @@ class Container::Builder::Tar {
 
 	method extract_file($tar, $filepath) {
 		# TODO
-		# Read header filename
-		# while it's not our file, check the size and jump + read new header filename
+		my $blocks_read = 0;
+		my $filename = $self->_get_filename($tar, $blocks_read);
+		my $filesize = $self->_get_filesize($tar, $blocks_read);
+		while($filename ne $filepath && $filename && length($tar) > $blocks_read * 512) {
+			$blocks_read++; # skip header block
+			# jump the amount of blocks to the next header.
+			my $block_count = int($filesize / 512); 
+			$block_count++ if $filesize % 512; # the remainder is another block unless there's no remainder bytes (file neatly fits a block, no remainder)
+			$blocks_read += $block_count;
+			# read header
+			$filename = $self->_get_filename($tar, $blocks_read);
+			$filesize = $self->_get_filesize($tar, $blocks_read);
+		}
 		# extract data from our file and return
+		if($filename eq $filepath) {
+			say "Found the file!!!!";
+			if($filesize == 0) { # probably a directory... Only return the header
+				my $header = substr($tar, $blocks_read*512, 512);
+				return $header;
+			} else {
+				my $bytes_to_read = 512; # header size
+				$bytes_to_read += 512 * int($filesize / 512);
+				$bytes_to_read += 512 if $filesize % 512;
+				say "reading $bytes_to_read...";
+				my $file = substr($tar, $blocks_read*512, $bytes_to_read); 
+				return $file;
+			}
+		} else {
+			say "did not find the file :'(";
+			return '';
+		}
+	}
+
+	method _get_filesize($tar, $blocks_read) {
+		my $header = substr($tar, $blocks_read * 512, 512);
+		my @header_bytes = split //, $header;
+		my @size = splice(@header_bytes, 124, 11);
+		my $size_str = join('', @size);
+		my $actual_size = oct($size_str);
+		say "Size file: $actual_size";
+		return $actual_size;
+	}
+
+	method _get_filename($tar, $blocks_read) {
+		my $header = substr($tar, $blocks_read * 512, 512);
+		my $filename = '';
+		my @header_bytes = split //, $header;
+		my $i = 0;
+		while($header_bytes[$i] ne "\x00") {
+			$filename .= $header_bytes[$i++];
+		}
+		say "Filename from header: $filename";
+		return $filename;
 	}
 }
 
@@ -390,10 +439,22 @@ class Container::Builder {
 
 	method extract_from_deb($package_name, $files_to_extract) {
 		my $deb_archive = $self->_get_deb_package($package_name);
-		my $deb = Container::Layer::DebianPackageFile->new(data => $deb_archive, compress => 0);
-		my $tar = $deb->generate_artifact();
-		# Read the tar -> with our own class because Archive::Tar doesn't read from a string...
-		# Extract the files we want
+		if($deb_archive) {
+			# Read the tar -> with our own class because Archive::Tar doesn't read from a string...
+			my $deb = Container::Layer::DebianPackageFile->new(data => $deb_archive, compress => 0);
+			my $tar = $deb->generate_artifact();
+			my $tar_builder = Container::Builder::Tar->new();
+			my $result_tar = '';
+			foreach(@$files_to_extract) {
+				my $tar_file = $tar_builder->extract_file($tar, $_);
+				say "[-] Did not find $_ in TAR file to extract" if !$tar_file;
+				$result_tar .= $tar_file;
+			}
+			$result_tar .= "\x00" x 1024; # two empty blocks
+			push @layers, Container::Layer::Tar->new(data => $result_tar);
+		} else {
+			die "Did not find deb package with name $package_name\n";
+		}
 	}
 
 	# Create a layer that has one file
@@ -536,8 +597,8 @@ $builder->add_deb_package('perl-base');
 # CPM dependencies
 # Warning: hacky code :P so we don't import the entire perl modules
 # TODO: extract these from perl-modules deb and put them in _our_ tar file
-my @files_to_extract('./usr/share/perl/5.36.0/PerlIO/', './usr/share/perl/5.36.0/PerlIO/via/', './usr/share/perl/5.36.0/PerlIO/via/QuotedPrint.pm', './usr/share/perl/5.36.0/PerlIO.pm');
-$builder->extract_from_deb('perl-modules', \@files_to_extract);
+my @files_to_extract = ('./', './usr/', './usr/share/', './usr/share/perl/', './usr/share/perl/5.36.0/', './usr/share/perl/5.36.0/PerlIO/', './usr/share/perl/5.36.0/PerlIO/via/', './usr/share/perl/5.36.0/PerlIO/via/QuotedPrint.pm', './usr/share/perl/5.36.0/PerlIO.pm', './usr/share/perl/5.36');
+$builder->extract_from_deb('perl-modules-5.36', \@files_to_extract);
 $builder->add_deb_package('libperlio-utf8-strict-perl');
 $builder->add_group('root', 0);
 $builder->add_group('tty', 5);
