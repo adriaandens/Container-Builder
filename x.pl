@@ -160,7 +160,7 @@ class Container::Builder::Tar {
 		$tar .= sprintf("%07o", int($uid)) . "\x00"; #  char uid[8];                  /* 108 */ -> not sure why we use 6 bytes but that's how other tars do it
 		$tar .= sprintf("%07o", int($gid)) . "\x00"; #  char gid[8];                  /* 116 */ -> not sure why we use 6 bytes but that's how other tars do it
 		$tar .= sprintf("%011o", 0) . "\x00"; #  char size[12];                /* 124 */ -> dir size is always 0...
-		$tar .= sprintf("%011o", time()) . "\x00"; #  char mtime[12];               /* 136 */
+		$tar .= sprintf("%011o", 566833020) . "\x00"; #  char mtime[12];               /* 136 */
 		$tar .= "\x20" x 8; #  char chksum[8];               /* 148 */ -> we'll do this later
 		$tar .= "5"; #  char typeflag;                /* 156 */ --> A dir is 5
 		$tar .= "\x00" x 100; #  char linkname[100];           /* 157 */
@@ -261,6 +261,34 @@ class Container::Builder::Tar {
 			say "did not find the file :'(";
 			return '';
 		}
+	}
+
+	method extract_wildcard_files($tar, $filepath) {
+		chop($filepath); # remove wildcard *
+		my $prefix_length = length($filepath);
+		my $blocks_read = 0;
+		my $filename = $self->_get_filename($tar, $blocks_read);
+		my $filesize = $self->_get_filesize($tar, $blocks_read);
+		my $tarfile = '';
+		while($filename && length($tar) > $blocks_read * 512) {
+			$blocks_read++; # skip header block
+			if(substr($filename, 0, $prefix_length) eq $filepath && $filesize > 0 && substr($filename, $prefix_length) !~ /\//) {
+				say "$filename matched wildcard $filepath";
+				my $bytes_to_read = 512; # header size
+				$bytes_to_read += 512 * int($filesize / 512);
+				$bytes_to_read += 512 if $filesize % 512;
+				my $file = substr($tar, ($blocks_read-1)*512, $bytes_to_read); 
+				$tarfile .= $file;
+			}
+			# jump the amount of blocks to the next header.
+			my $block_count = int($filesize / 512); 
+			$block_count++ if $filesize % 512; # the remainder is another block unless there's no remainder bytes (file neatly fits a block, no remainder)
+			$blocks_read += $block_count;
+			# read header
+			$filename = $self->_get_filename($tar, $blocks_read);
+			$filesize = $self->_get_filesize($tar, $blocks_read);
+		}
+		return $tarfile;
 	}
 
 	method _get_filesize($tar, $blocks_read) {
@@ -446,11 +474,19 @@ class Container::Builder {
 			my $tar_builder = Container::Builder::Tar->new();
 			my $result_tar = '';
 			foreach(@$files_to_extract) {
-				my $tar_file = $tar_builder->extract_file($tar, $_);
+				my $tar_file = '';
+				if($_ =~ /\*$/) {
+					$tar_file = $tar_builder->extract_wildcard_files($tar, $_);
+				} else {
+					$tar_file = $tar_builder->extract_file($tar, $_);
+				}
 				say "[-] Did not find $_ in TAR file to extract" if !$tar_file;
 				$result_tar .= $tar_file;
 			}
 			$result_tar .= "\x00" x 1024; # two empty blocks
+			open(my $f , '>ghehe.tar') or die 'cannot write ghehe.tar';
+			print $f $result_tar;
+			close($f);
 			push @layers, Container::Layer::Tar->new(data => $result_tar);
 		} else {
 			die "Did not find deb package with name $package_name\n";
@@ -595,11 +631,34 @@ $builder->add_deb_package('libssl3');
 $builder->add_deb_package('libcrypt1');
 $builder->add_deb_package('perl-base');
 # CPM dependencies
-# Warning: hacky code :P so we don't import the entire perl modules
-# TODO: extract these from perl-modules deb and put them in _our_ tar file
-my @files_to_extract = ('./', './usr/', './usr/share/', './usr/share/perl/', './usr/share/perl/5.36.0/', './usr/share/perl/5.36.0/PerlIO/', './usr/share/perl/5.36.0/PerlIO/via/', './usr/share/perl/5.36.0/PerlIO/via/QuotedPrint.pm', './usr/share/perl/5.36.0/PerlIO.pm', './usr/share/perl/5.36');
-$builder->extract_from_deb('perl-modules-5.36', \@files_to_extract);
-$builder->add_deb_package('libperlio-utf8-strict-perl');
+#$builder->add_deb_package('libbz2-1.0');
+#$builder->add_deb_package('libdb5.3');
+#$builder->add_deb_package('libgdbm6');
+#$builder->add_deb_package('libgdbm-compat4');
+#$builder->add_deb_package('zlib1g');
+#$builder->add_deb_package('perl-modules-5.36');
+#$builder->add_deb_package('libperl5.36');
+# TODO: cpm now fails with an error of no valid https transport
+# Using CPANMinus
+$builder->add_deb_package('perl-modules-5.36');
+$builder->add_deb_package('libperl5.36');
+# cpanm deps from Packages file...
+$builder->add_deb_package('libcpan-distnameinfo-perl');
+$builder->add_deb_package('libcpan-meta-check-perl');
+$builder->add_deb_package('libcpan-meta-requirements-perl');
+$builder->add_deb_package('libcpan-meta-yaml-perl');
+$builder->add_deb_package('libfile-pushd-perl');
+$builder->add_deb_package('libhttp-tiny-perl');
+$builder->add_deb_package('libjson-pp-perl');
+$builder->add_deb_package('liblocal-lib-perl');
+$builder->add_deb_package('libmodule-cpanfile-perl');
+$builder->add_deb_package('libmodule-metadata-perl');
+$builder->add_deb_package('libparse-pmfile-perl');
+$builder->add_deb_package('libstring-shellquote-perl');
+$builder->add_deb_package('libversion-perl');
+$builder->add_deb_package('cpanminus');
+#my @files_to_extract = ('./', './usr/', './usr/share/', './usr/share/perl', './usr/share/perl/5.36.0', './usr/share/perl/5.36', './usr/share/perl/5.36.0/CPAN/Meta/', './usr/share/perl/5.36.0/CPAN/Meta/Converter.pm', './usr/share/perl/5.36.0/CPAN/Meta/Feature.pm', './usr/share/perl/5.36.0/CPAN/Meta/History/', './usr/share/perl/5.36.0/CPAN/Meta/History/Meta_1_0.pod', './usr/share/perl/5.36.0/CPAN/Meta/History/Meta_1_1.pod', './usr/share/perl/5.36.0/CPAN/Meta/History/Meta_1_2.pod', './usr/share/perl/5.36.0/CPAN/Meta/History/Meta_1_3.pod', './usr/share/perl/5.36.0/CPAN/Meta/History/Meta_1_4.pod', './usr/share/perl/5.36.0/CPAN/Meta/History.pm', './usr/share/perl/5.36.0/CPAN/Meta/Merge.pm', './usr/share/perl/5.36.0/CPAN/Meta/Prereqs.pm', './usr/share/perl/5.36.0/CPAN/Meta/Requirements.pm', './usr/share/perl/5.36.0/CPAN/Meta/Spec.pm', './usr/share/perl/5.36.0/CPAN/Meta/Validator.pm', './usr/share/perl/5.36.0/CPAN/Meta/YAML.pm', './usr/share/perl/5.36.0/CPAN/Meta.pm', './usr/share/perl/5.36.0/*', './usr/share/perl/5.36.0/version/', './usr/share/perl/5.36.0/version/Internals.pod', './usr/share/perl/5.36.0/version/regex.pm', './usr/share/perl/5.36.0/warnings/', './usr/share/perl/5.36.0/warnings/register.pm');
+#$builder->extract_from_deb('perl-modules-5.36', \@files_to_extract);
 $builder->add_group('root', 0);
 $builder->add_group('tty', 5);
 $builder->add_group('staff', 50);
