@@ -198,7 +198,7 @@ class Container::Builder::Tar {
 		$tar .= sprintf("%07o", int($uid)) . "\x00"; #  char uid[8];                  /* 108 */
 		$tar .= sprintf("%07o", int($gid)) . "\x00"; #  char gid[8];                  /* 116 */ 
 		$tar .= sprintf("%011o", length($data)) . "\x00"; #  char size[12];                /* 124 */ 
-		$tar .= sprintf("%011o", time()) . "\x00"; #  char mtime[12];               /* 136 */
+		$tar .= sprintf("%011o", 566833020) . "\x00"; #  char mtime[12];               /* 136 */
 		$tar .= "\x20" x 8; #  char chksum[8];               /* 148 */ -> we'll do this later
 		$tar .= "0"; #  char typeflag;                /* 156 */ --> A regular file is 0
 		$tar .= "\x00" x 100; #  char linkname[100];           /* 157 */
@@ -656,6 +656,9 @@ $builder->add_deb_package('libmodule-metadata-perl');
 $builder->add_deb_package('libparse-pmfile-perl');
 $builder->add_deb_package('libstring-shellquote-perl');
 $builder->add_deb_package('libversion-perl');
+# cpanm deps from errors i received
+$builder->add_deb_package('gzip'); # cpanm executes gzip commands!
+$builder->add_deb_package('make');
 $builder->add_deb_package('cpanminus');
 #my @files_to_extract = ('./', './usr/', './usr/share/', './usr/share/perl', './usr/share/perl/5.36.0', './usr/share/perl/5.36', './usr/share/perl/5.36.0/CPAN/Meta/', './usr/share/perl/5.36.0/CPAN/Meta/Converter.pm', './usr/share/perl/5.36.0/CPAN/Meta/Feature.pm', './usr/share/perl/5.36.0/CPAN/Meta/History/', './usr/share/perl/5.36.0/CPAN/Meta/History/Meta_1_0.pod', './usr/share/perl/5.36.0/CPAN/Meta/History/Meta_1_1.pod', './usr/share/perl/5.36.0/CPAN/Meta/History/Meta_1_2.pod', './usr/share/perl/5.36.0/CPAN/Meta/History/Meta_1_3.pod', './usr/share/perl/5.36.0/CPAN/Meta/History/Meta_1_4.pod', './usr/share/perl/5.36.0/CPAN/Meta/History.pm', './usr/share/perl/5.36.0/CPAN/Meta/Merge.pm', './usr/share/perl/5.36.0/CPAN/Meta/Prereqs.pm', './usr/share/perl/5.36.0/CPAN/Meta/Requirements.pm', './usr/share/perl/5.36.0/CPAN/Meta/Spec.pm', './usr/share/perl/5.36.0/CPAN/Meta/Validator.pm', './usr/share/perl/5.36.0/CPAN/Meta/YAML.pm', './usr/share/perl/5.36.0/CPAN/Meta.pm', './usr/share/perl/5.36.0/*', './usr/share/perl/5.36.0/version/', './usr/share/perl/5.36.0/version/Internals.pod', './usr/share/perl/5.36.0/version/regex.pm', './usr/share/perl/5.36.0/warnings/', './usr/share/perl/5.36.0/warnings/register.pm');
 #$builder->extract_from_deb('perl-modules-5.36', \@files_to_extract);
@@ -667,7 +670,7 @@ $builder->add_group('nobody', 65000);
 $builder->add_user('root', 0, 0, '/sbin/nologin', '/root');
 $builder->add_user('nobody', 65000, 65000, '/sbin/nologin', '/nohome');
 $builder->add_user('larry', 1337, 1337, '/sbin/nologin', '/home/larry');
-$builder->runas_user('larry');
+$builder->runas_user('root');
 $builder->set_env('PATH', '/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin');
 $builder->set_work_dir('/');
 $builder->set_entry('perl');
