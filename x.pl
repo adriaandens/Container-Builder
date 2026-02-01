@@ -430,6 +430,14 @@ class Container::Builder {
 	}
 
 	method _get_deb_package($package_name) {
+		if(-r $package_name . '.deb') {
+			local $/ = undef;
+			open(my $deb, '<', $package_name . '.deb') or die "Cannot open $package_name.deb\n";
+			my $deb_content = <$deb>;
+			close($deb);
+			return $deb_content;
+		}
+
 		$self->parse_packages() if !$packages; # lazy load on first call
 		my $pkg = $packages->get_package('name' => $package_name);
 		return 0 if !$pkg;
@@ -622,51 +630,23 @@ $builder->create_directory('home/larry/', 0700, 1337, 1337);
 $builder->create_directory('etc/', 0755, 0, 0);
 $builder->create_directory('app/', 0755, 1337, 1337);
 # C dependencies (to run a compiled executable)
-$builder->add_deb_package_from_file('libc-bin_2.36-9+deb12u13_amd64.deb');
-$builder->add_deb_package_from_file('libc6_2.36-9+deb12u13_amd64.deb');
-$builder->add_deb_package_from_file('gcc-12-base_12.2.0-14+deb12u1_amd64.deb');
-$builder->add_deb_package_from_file('libgcc-s1_12.2.0-14+deb12u1_amd64.deb');
-$builder->add_deb_package_from_file('libgomp1_12.2.0-14+deb12u1_amd64.deb');
-$builder->add_deb_package_from_file('libstdc++6_12.2.0-14+deb12u1_amd64.deb');
-$builder->add_deb_package_from_file('ca-certificates_20230311+deb12u1_all.deb');
+$builder->add_deb_package('libc-bin');
+$builder->add_deb_package('libc6');
+$builder->add_deb_package('gcc-12-base');
+$builder->add_deb_package('libgcc-s1');
+$builder->add_deb_package('libgomp1');
+$builder->add_deb_package('libstdc++6');
+$builder->add_deb_package('ca-certificates');
 # SSL support
 $builder->add_deb_package('libssl3');
 # Perl dependencies (to run a basic Perl program)
 $builder->add_deb_package('libcrypt1');
 $builder->add_deb_package('perl-base');
-# CPM dependencies
-#$builder->add_deb_package('libbz2-1.0');
-#$builder->add_deb_package('libdb5.3');
-#$builder->add_deb_package('libgdbm6');
-#$builder->add_deb_package('libgdbm-compat4');
-#$builder->add_deb_package('zlib1g');
-#$builder->add_deb_package('perl-modules-5.36');
-#$builder->add_deb_package('libperl5.36');
-# TODO: cpm now fails with an error of no valid https transport
-# Using CPANMinus
+# This is all extra (not needed for a hello world)
 $builder->add_deb_package('perl-modules-5.36');
 $builder->add_deb_package('libperl5.36');
 $builder->add_deb_package('perl');
-# cpanm deps from Packages file...
-#$builder->add_deb_package('libcpan-distnameinfo-perl');
-#$builder->add_deb_package('libcpan-meta-check-perl');
-#$builder->add_deb_package('libcpan-meta-requirements-perl');
-#$builder->add_deb_package('libcpan-meta-yaml-perl');
-#$builder->add_deb_package('libfile-pushd-perl');
-#$builder->add_deb_package('libhttp-tiny-perl');
-#$builder->add_deb_package('libjson-pp-perl');
-#$builder->add_deb_package('liblocal-lib-perl');
-#$builder->add_deb_package('libmodule-cpanfile-perl');
-#$builder->add_deb_package('libmodule-metadata-perl');
-#$builder->add_deb_package('libparse-pmfile-perl');
-#$builder->add_deb_package('libstring-shellquote-perl');
-#$builder->add_deb_package('libversion-perl');
-# cpanm deps from errors i received
-#$builder->add_deb_package('gzip'); # cpanm executes gzip commands!
-#$builder->add_deb_package('make');
-#$builder->add_deb_package('cpanminus');
-#my @files_to_extract = ('./', './usr/', './usr/share/', './usr/share/perl', './usr/share/perl/5.36.0', './usr/share/perl/5.36', './usr/share/perl/5.36.0/CPAN/Meta/', './usr/share/perl/5.36.0/CPAN/Meta/Converter.pm', './usr/share/perl/5.36.0/CPAN/Meta/Feature.pm', './usr/share/perl/5.36.0/CPAN/Meta/History/', './usr/share/perl/5.36.0/CPAN/Meta/History/Meta_1_0.pod', './usr/share/perl/5.36.0/CPAN/Meta/History/Meta_1_1.pod', './usr/share/perl/5.36.0/CPAN/Meta/History/Meta_1_2.pod', './usr/share/perl/5.36.0/CPAN/Meta/History/Meta_1_3.pod', './usr/share/perl/5.36.0/CPAN/Meta/History/Meta_1_4.pod', './usr/share/perl/5.36.0/CPAN/Meta/History.pm', './usr/share/perl/5.36.0/CPAN/Meta/Merge.pm', './usr/share/perl/5.36.0/CPAN/Meta/Prereqs.pm', './usr/share/perl/5.36.0/CPAN/Meta/Requirements.pm', './usr/share/perl/5.36.0/CPAN/Meta/Spec.pm', './usr/share/perl/5.36.0/CPAN/Meta/Validator.pm', './usr/share/perl/5.36.0/CPAN/Meta/YAML.pm', './usr/share/perl/5.36.0/CPAN/Meta.pm', './usr/share/perl/5.36.0/*', './usr/share/perl/5.36.0/version/', './usr/share/perl/5.36.0/version/Internals.pod', './usr/share/perl/5.36.0/version/regex.pm', './usr/share/perl/5.36.0/warnings/', './usr/share/perl/5.36.0/warnings/register.pm');
-#$builder->extract_from_deb('perl-modules-5.36', \@files_to_extract);
+# My fatpack expects these to be already installed somehow
 $builder->add_deb_package('libtry-tiny-perl');
 $builder->add_deb_package('libdevel-stacktrace-perl');
 $builder->add_deb_package('libdevel-stacktrace-ashtml-perl');
@@ -682,6 +662,5 @@ $builder->runas_user('root');
 $builder->set_env('PATH', '/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin');
 $builder->set_work_dir('/');
 $builder->set_entry('perl');
-#$builder->add_file('cpm', '/bin/cpm', 0755, 0, 0); # CPAN Package Manager
-#$builder->add_file('testproggie.pl', '/home/larry/testproggie.pl', 0644, 1337, 1337); # our program
+$builder->add_file('testproggie.pl', '/home/larry/testproggie.pl', 0644, 1337, 1337); # our program
 $builder->build();
