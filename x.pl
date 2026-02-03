@@ -460,12 +460,17 @@ class Container::Builder {
 
 	method add_deb_package($package_name) {
 		my $package_content = $self->_get_deb_package($package_name);
+		return 0 if ! $package_content;
 		# TODO: Writing packages to disk for caching should be optional (if you're doing 1 build, caching files is useless)
 		if(!-r $package_name . '.deb') {
 			open(my $f, '>', $package_name . '.deb') or die "cannot open $package_name.deb\n";
 			print $f $package_content;
 			close($f);
 		}
+		$self->parse_packages() if !$packages; # lazy load on first call
+		my $pkg = $packages->get_package('name' => $package_name);
+		say "Dependencies: " . $pkg->depends;
+		
 		# TODO: need to be able to pass a memory buffer here so we can skip writing to disk
 		push @layers, Container::Layer::DebianPackageFile->new(file => $package_name . '.deb');
 	}
@@ -650,6 +655,14 @@ $builder->add_deb_package('perl');
 $builder->add_deb_package('libtry-tiny-perl');
 $builder->add_deb_package('libdevel-stacktrace-perl');
 $builder->add_deb_package('libdevel-stacktrace-ashtml-perl');
+# html::parser contains xs code so no can do with fatpack
+$builder->add_deb_package('libhtml-parser-perl');
+	# depends on:
+	$builder->add_deb_package('liburi-perl');
+		$builder->add_deb_package('libregexp-ipv6-perl');
+	$builder->add_deb_package('libhtml-tagset-perl');
+# same for Clone 
+$builder->add_deb_package('libclone-perl');
 $builder->add_group('root', 0);
 $builder->add_group('tty', 5);
 $builder->add_group('staff', 50);
