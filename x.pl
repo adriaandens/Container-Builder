@@ -25,8 +25,7 @@ use Crypt::Digest::SHA256 qw(sha256_hex sha256_file_hex);
 use LWP::Protocol::https;
 use LWP::Simple;
 use LWP::UserAgent;
-use DPKG::Parse::Packages;
-use DPKG::Parse::Entry;
+use DPKG::Packages::Parser;
 
 class Container::Layer {
 	# This method is called in the builder to generate the artifact (bytes on disk) that will be put in the container image
@@ -414,19 +413,20 @@ class Container::Builder {
 	field @entry = ();
 	field @cmd = ();
 	field @env = ();
+	field %deb_packages = ();
 	field @dirs = ();
 	field @users = ();
 	field @groups = ();
 	field $packages; 
 
-	method parse_packages() {
+	method parse_packages(@fields) {
 		if(!-r 'Packages') {
 			say "[+] Downloading Debian Packages";
 			my $packagesgz = LWP::Simple::get("https://debian.inf.tu-dresden.de/debian/dists/bookworm/main/binary-amd64/Packages.gz");
 			IO::Uncompress::Gunzip::gunzip(\$packagesgz => 'Packages');
 		}
-		$packages = DPKG::Parse::Packages->new('filename' => 'Packages');
-		$packages->parse();
+		$packages = DPKG::Packages::Parser->new('file' => 'Packages');
+		$packages->parse(@fields);
 	}
 
 	method _get_deb_package($package_name) {
@@ -438,11 +438,11 @@ class Container::Builder {
 			return $deb_content;
 		}
 
-		$self->parse_packages() if !$packages; # lazy load on first call
-		my $pkg = $packages->get_package('name' => $package_name);
+		$self->parse_packages('Filename', 'Depends') if !$packages; # lazy load on first call
+		my $pkg = $packages->get_package($package_name);
 		return 0 if !$pkg;
 
-		my $filepath = $pkg->filename;
+		my $filepath = $pkg->{Filename};
 		my ($filename) = $filepath =~ m/([^\/]+)$/;
 		say "filename is $filename";
 		say "Filepath for package $package_name is $filepath";
@@ -459,6 +459,7 @@ class Container::Builder {
 	}
 
 	method add_deb_package($package_name) {
+		return 0 if $deb_packages{$package_name};
 		my $package_content = $self->_get_deb_package($package_name);
 		return 0 if ! $package_content;
 		# TODO: Writing packages to disk for caching should be optional (if you're doing 1 build, caching files is useless)
@@ -467,9 +468,25 @@ class Container::Builder {
 			print $f $package_content;
 			close($f);
 		}
-		$self->parse_packages() if !$packages; # lazy load on first call
-		my $pkg = $packages->get_package('name' => $package_name);
-		say "Dependencies: " . $pkg->depends;
+
+		# Before adding the package as a layer, get the dependencies and add those
+		$deb_packages{$package_name} = 1;
+		$self->parse_packages('Filename', 'Depends') if !$packages; # lazy load on first call
+		my $pkg = $packages->get_package($package_name);
+		say "$package_name depends on:";
+		foreach(@{$pkg->{Depends}}) {
+			if(ref eq 'ARRAY') {
+				foreach(@$_) {
+					say "\tOR Dependency: $_->{name}";
+				}
+				# TODO: there's no way we can make an intelligent decision here, we can check if any of these have already been added or not. If one of the options was already added, we can skip choosing; if none was already added, take the first one.
+				$self->add_deb_package(${$_}[0]->{name});
+			} elsif(ref eq 'HASH') {
+				say "\tDependency: " . $_->{name};
+				$self->add_deb_package($_->{name});
+			}
+		}
+
 		
 		# TODO: need to be able to pass a memory buffer here so we can skip writing to disk
 		push @layers, Container::Layer::DebianPackageFile->new(file => $package_name . '.deb');
@@ -648,9 +665,9 @@ $builder->add_deb_package('libssl3');
 $builder->add_deb_package('libcrypt1');
 $builder->add_deb_package('perl-base');
 # This is all extra (not needed for a hello world)
-$builder->add_deb_package('perl-modules-5.36');
-$builder->add_deb_package('libperl5.36');
-$builder->add_deb_package('perl');
+#$builder->add_deb_package('perl-modules-5.36');
+#$builder->add_deb_package('libperl5.36');
+#$builder->add_deb_package('perl');
 # My fatpack expects these to be already installed somehow
 $builder->add_deb_package('libtry-tiny-perl');
 $builder->add_deb_package('libdevel-stacktrace-perl');
