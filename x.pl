@@ -489,13 +489,13 @@ class Container::Builder {
 
 		
 		# TODO: need to be able to pass a memory buffer here so we can skip writing to disk
-		push @layers, Container::Layer::DebianPackageFile->new(file => $package_name . '.deb');
+		push @layers, Container::Layer::DebianPackageFile->new(file => $package_name . '.deb', compress => 0);
 	}
 
 	# Create a layer that adds a package to the container
 	method add_deb_package_from_file($filepath_deb) {
 		die "Unable to read $filepath_deb\n" if !-r $filepath_deb;
-		push @layers, Container::Layer::DebianPackageFile->new(file => $filepath_deb);
+		push @layers, Container::Layer::DebianPackageFile->new(file => $filepath_deb, compress => 0);
 	}
 
 	method extract_from_deb($package_name, $files_to_extract) {
