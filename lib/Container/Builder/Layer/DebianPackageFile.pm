@@ -38,6 +38,7 @@ class Container::Builder::Layer::DebianPackageFile :isa(Container::Builder::Laye
 		if($compress) {
 			my $gunzip_compressed_data;
 			IO::Compress::Gzip::gzip(\$unxz_data => \$gunzip_compressed_data) or die "Unable to gunzip the unxz data\n";
+			$self->_scrub_gzip_timestamp(\$gunzip_compressed_data);
 			$size = length($gunzip_compressed_data);
 			$digest = Crypt::Digest::SHA256::sha256_hex($gunzip_compressed_data);
 			return $gunzip_compressed_data;
@@ -46,6 +47,10 @@ class Container::Builder::Layer::DebianPackageFile :isa(Container::Builder::Laye
 			$digest = Crypt::Digest::SHA256::sha256_hex($unxz_data);
 			return $unxz_data;
 		}
+	}
+
+	method _scrub_gzip_timestamp($s) {
+		$$s =~ s/^\x1f\x8b\x08(.).{4}/\x1f\x8b\x08$1\x00\x00\x00\x00/;
 	}
 
 	method get_media_type() { 

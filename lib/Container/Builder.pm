@@ -20,9 +20,12 @@ use Container::Builder::Layer::Tar;
 use Container::Builder::Layer::SingleFile;
 
 class Container::Builder {
+	field $compress_deb_tar :param = 1;
+	field $debian_pkg_hostname :param;
+
 	field $os = 'debian';
 	field $arch = 'amd64';
-	field $os_version = 'bookworm';
+	field $os_version :param = 'bookworm';
 	field @layers = ();
 	field $original_dir = Cwd::getcwd();
 	field $runas = 'root';
@@ -39,7 +42,9 @@ class Container::Builder {
 	method parse_packages(@fields) {
 		if(!-r 'Packages') {
 			say "[+] Downloading Debian Packages";
-			my $packagesgz = LWP::Simple::get("https://debian.inf.tu-dresden.de/debian/dists/bookworm/main/binary-amd64/Packages.gz");
+			$debian_pkg_hostname =~ s/[^\w\-\.]//g; # a light scrubbing on the hostname... But we still assume the caller does the scrubbing!
+			die "[-] Unsupported debian" if $os_version ne 'bookworm' && $os_version ne 'trixie';
+			my $packagesgz = LWP::Simple::get("https://$debian_pkg_hostname/debian/dists/$os_version/main/binary-amd64/Packages.gz");
 			IO::Uncompress::Gunzip::gunzip(\$packagesgz => 'Packages');
 		}
 		$packages = DPKG::Packages::Parser->new('file' => 'Packages');
@@ -107,20 +112,20 @@ class Container::Builder {
 		
 		# TODO: need to be able to pass a memory buffer here so we can skip writing to disk
 		say "Actually adding deb package: $package_name";
-		push @layers, Container::Builder::Layer::DebianPackageFile->new(file => 'artifacts/' . $package_name . '.deb', compress => 0);
+		push @layers, Container::Builder::Layer::DebianPackageFile->new(file => 'artifacts/' . $package_name . '.deb', compress => $compress_deb_tar);
 	}
 
 	# Create a layer that adds a package to the container
 	method add_deb_package_from_file($filepath_deb) {
 		die "Unable to read $filepath_deb\n" if !-r $filepath_deb;
-		push @layers, Container::Builder::Layer::DebianPackageFile->new(file => $filepath_deb, compress => 0);
+		push @layers, Container::Builder::Layer::DebianPackageFile->new(file => $filepath_deb, compress => $compress_deb_tar);
 	}
 
 	method extract_from_deb($package_name, $files_to_extract) {
 		my $deb_archive = $self->_get_deb_package($package_name);
 		if($deb_archive) {
 			# Read the tar -> with our own class because Archive::Tar doesn't read from a string...
-			my $deb = Container::Builder::Layer::DebianPackageFile->new(data => $deb_archive, compress => 0);
+			my $deb = Container::Builder::Layer::DebianPackageFile->new(data => $deb_archive, compress => $compress_deb_tar);
 			my $tar = $deb->generate_artifact();
 			my $tar_builder = Container::Builder::Tar->new();
 			my $result_tar = '';

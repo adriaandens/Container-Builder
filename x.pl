@@ -1,7 +1,6 @@
 use v5.40;
 
 # Big TODO:
-# * Instead of concatenating a JSON string (many issues with escaping characters, injections, ...) make an object and let a Perl module handle this.
 # * Be more flexible in what it can generate (currently fixed debian, amd64, ...)
 # * Do a lot more input checking on input from the User like the environment variables, CMD, username that runs, ...
 # * Maybe remove the /usr/share/doc/ files from the archives since it's an execute-only container, there's no tools to view docs anyway...
@@ -12,7 +11,7 @@ use v5.40;
 
 use Container::Builder;
 
-my $builder = Container::Builder->new();
+my $builder = Container::Builder->new(debian_pkg_hostname => 'debian.inf.tu-dresden.de');
 $builder->create_directory('/', 0755, 0, 0);
 $builder->create_directory('bin/', 0755, 0, 0);
 $builder->create_directory('tmp/', 01777, 0, 0);
