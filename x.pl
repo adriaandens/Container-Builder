@@ -1,13 +1,17 @@
 use v5.40;
 
 # Big TODO:
-# * Be more flexible in what it can generate (currently fixed debian, amd64, ...)
 # * Do a lot more input checking on input from the User like the environment variables, CMD, username that runs, ...
 # * Maybe remove the /usr/share/doc/ files from the archives since it's an execute-only container, there's no tools to view docs anyway...
 # * Make the builder generate the same artifacts every time, so no "created" dates etc. but a byte-per-byte exact archive with the same input. (Also remove Builder version)
 #   * This also implies controlling all dates from all files in the TAR.
 # * Make the builder "date" aware. When passed a certain date (< today), we want to "see" the Debian packages that were available back then, not the latest ones that are available today. Effectively allowing you to go back in time and regenerate the exact image as you did on date X.
-# * Scrub GZIP archive timestamps so that they generate the same digest every time!
+# * Support copying entire directories into an archive (currently only empty dirs and single files are supported)
+	# * once we have this, i can make an end-2-end dancer2 app container
+# * Support "from_tar" option, to base ourselves on an existing base tar file and append extra oci layers to it.
+	# * basically what you do in a Dockerfile when you use FROM
+	# * this allows for a base.tar generation (like distroless-perl-plack) and then having a separate Container::Builder that extends the tar file without needing to generate from scratch
+	# * need to take into account the merging of /etc/passwd (or update), and maybe other things
 
 use Container::Builder;
 

@@ -25,7 +25,10 @@ class Container::Builder::Config {
 		my @diff_ids = map { 'sha256:' . $_->get_digest() } @$layers;
 		$rootfs{diff_ids} = \@diff_ids;
 		my %history = ( created => '0001-01-01T00:00:00Z' );
-		my @histories = map { \%history } @$layers;
+		my @histories = map { 
+			my %history = ( created => '0001-01-01T00:00:00Z', comment => $_->get_comment(), created_by => $_->get_comment() );
+			\%history;
+		 } @$layers;
 		my %json_pp = (
 			created => DateTime->now() . 'Z',
 			architecture => 'amd64',

@@ -112,20 +112,20 @@ class Container::Builder {
 		
 		# TODO: need to be able to pass a memory buffer here so we can skip writing to disk
 		say "Actually adding deb package: $package_name";
-		push @layers, Container::Builder::Layer::DebianPackageFile->new(file => 'artifacts/' . $package_name . '.deb', compress => $compress_deb_tar);
+		push @layers, Container::Builder::Layer::DebianPackageFile->new(comment => $package_name, file => 'artifacts/' . $package_name . '.deb', compress => $compress_deb_tar);
 	}
 
 	# Create a layer that adds a package to the container
 	method add_deb_package_from_file($filepath_deb) {
 		die "Unable to read $filepath_deb\n" if !-r $filepath_deb;
-		push @layers, Container::Builder::Layer::DebianPackageFile->new(file => $filepath_deb, compress => $compress_deb_tar);
+		push @layers, Container::Builder::Layer::DebianPackageFile->new(comment => $filepath_deb, file => $filepath_deb, compress => $compress_deb_tar);
 	}
 
 	method extract_from_deb($package_name, $files_to_extract) {
 		my $deb_archive = $self->_get_deb_package($package_name);
 		if($deb_archive) {
 			# Read the tar -> with our own class because Archive::Tar doesn't read from a string...
-			my $deb = Container::Builder::Layer::DebianPackageFile->new(data => $deb_archive, compress => $compress_deb_tar);
+			my $deb = Container::Builder::Layer::DebianPackageFile->new(comment => $package_name, data => $deb_archive, compress => $compress_deb_tar);
 			my $tar = $deb->generate_artifact();
 			my $tar_builder = Container::Builder::Tar->new();
 			my $result_tar = '';
@@ -140,7 +140,7 @@ class Container::Builder {
 				$result_tar .= $tar_file;
 			}
 			$result_tar .= "\x00" x 1024; # two empty blocks
-			push @layers, Container::Builder::Layer::Tar->new(data => $result_tar);
+			push @layers, Container::Builder::Layer::Tar->new(comment => "custom $package_name", data => $result_tar);
 		} else {
 			die "Did not find deb package with name $package_name\n";
 		}
@@ -149,11 +149,11 @@ class Container::Builder {
 	# Create a layer that has one file
 	method add_file($file_on_disk, $location_in_ctr, $mode, $user, $group) {
 		die "Cannot read file at $file_on_disk\n" if !-r $file_on_disk;
-		push @layers, Container::Builder::Layer::SingleFile->new(file => $file_on_disk, dest => $location_in_ctr, mode => $mode, user => $user, group => $group);
+		push @layers, Container::Builder::Layer::SingleFile->new(comment => $location_in_ctr, file => $file_on_disk, dest => $location_in_ctr, mode => $mode, user => $user, group => $group);
 	}
 
 	method add_file_from_string($data, $location_in_ctr, $mode, $user, $group) {
-		push @layers, Container::Builder::Layer::SingleFile->new(data => $data, dest => $location_in_ctr, mode => $mode, user => $user, group => $group);
+		push @layers, Container::Builder::Layer::SingleFile->new(comment => $location_in_ctr, data => $data, dest => $location_in_ctr, mode => $mode, user => $user, group => $group);
 	}
 
 	# Create a layer that creates a directory in the container
@@ -230,7 +230,7 @@ class Container::Builder {
 			$tar->add_file('/etc/passwd', $etcpasswd, 0644, 0, 0);
 	
 		my $tar_content = $tar->get_tar();
-		unshift @layers, Container::Builder::Layer::Tar->new(data => $tar_content);
+		unshift @layers, Container::Builder::Layer::Tar->new(comment => 'Base files', data => $tar_content);
 
 		$tar = Container::Builder::Tar->new();
 		$tar->add_dir('blobs/', 0755, 0, 0);
