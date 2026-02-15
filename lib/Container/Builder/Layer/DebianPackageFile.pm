@@ -63,3 +63,70 @@ class Container::Builder::Layer::DebianPackageFile :isa(Container::Builder::Laye
 }
 
 1;
+__END__
+
+=encoding utf-8
+
+=pod
+
+=head1 NAME
+
+Container::Builder::Layer::DebianPackageFile - Make a container layer based upon a Debian package file.
+
+=head1 DESCRIPTION
+
+Container::Builder::Layer::DebianPackageFile implements Container::Builder::Layer and can be used to create container layers based upon a debian package file.
+
+=head1 METHODS
+
+=over 1
+
+=item new(file => 'mypackage.deb', compress => 1)
+
+=item new(data => 'a valid deb archive string', compress => 1)
+
+Create a C<Container::Builder::Layer::DebianPackageFile> object. Pass in either the filename with C<file> or pass the debian archive data as a scalar with C<data>. The C<compress> argument controls whether we return a Gzipped archive as a layer or a plain TAR file.
+
+=item generate_artifact()
+
+Returns a TAR (gzipped or not) file that is based upon the Debian package C<data.tar.xz> archive contents. This method will unpack the C<.deb> using Ar. And then decompress the XZ archive to get the TAR data from the Debian package.
+
+=item get_media_type()
+
+Return the media type of the container. This is the	mime type of the layer. Possibilities are C<application/vnd.oci.image.layer.v1.tar> or C<application/vnd.oci.image.layer.v1.tar+gzip>.
+
+=item get_digest()
+
+Returns the SHA256 digest of the generated layer.
+
+=item get_size()
+
+Returns the size (length) of the generated layer.
+
+=back
+
+=head1 AUTHOR
+
+Adriaan Dens E<lt>adri@cpan.orgE<gt>
+
+=head1 COPYRIGHT
+
+Copyright 2026- Adriaan Dens
+
+=head1 LICENSE
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself.
+
+=head1 SEE ALSO
+
+=over
+
+=item Part of the L<Container::Builder> module.
+
+=item L<https://github.com/opencontainers/image-spec/blob/main/layer.md>
+
+=back
+
+=cut
+

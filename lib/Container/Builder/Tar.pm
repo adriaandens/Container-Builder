@@ -99,7 +99,6 @@ class Container::Builder::Tar {
 	}
 
 	method extract_file($tar, $filepath) {
-		# TODO
 		my $blocks_read = 0;
 		my $filename = $self->_get_filename($tar, $blocks_read);
 		my $filesize = $self->_get_filesize($tar, $blocks_read);
@@ -180,3 +179,72 @@ class Container::Builder::Tar {
 }
 
 1;
+__END__
+
+=encoding utf-8
+
+=pod
+
+=head1 NAME
+
+Container::Builder::Tar - Class for creating Tar archives from scratch.
+
+=head1 DESCRIPTION
+
+Container::Builder::Tar provides several methods to create a TAR archive. It was created because the methods of L<Archive::Tar> didn't allow fine-grained control over permissions and owning users.
+
+=head1 METHODS
+
+=over 1
+
+=item new()
+
+Create an empty C<Container::Builder::Tar> object. 
+
+=item get_tar()
+
+Return a valid TAR file as a scalar string that is the concatenation of all the directories and files.
+
+=item add_dir($path, $mode, $uid, $gid)
+
+Add a directory to the TAR archive. Absolute directories will be prefixed with a '.'.
+
+=item add_file($filepath, $data, $mode, $uid, $gid)
+
+Add a file to the TAR archive. Absolute paths will be prefixed with a '.'.
+
+=item extract_file($tar, $filepath)
+
+Pass a valid TAR file as a scalar string and a filepath, and this method will return the header + data blocks of the file (or only the header when it's a directory).
+
+=item extract_wildcard_files($tar, $filepath)
+
+Does the same as C<extract_file()> but allows appending a wildcard (an asterisk) to the path to get all the files matching in the directory. Note that this does not recursively find all files, it will only match the files in the directory of the wildcard.
+
+=back
+
+=head1 AUTHOR
+
+Adriaan Dens E<lt>adri@cpan.orgE<gt>
+
+=head1 COPYRIGHT
+
+Copyright 2026- Adriaan Dens
+
+=head1 LICENSE
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself.
+
+=head1 SEE ALSO
+
+=over
+
+=item Part of the L<Container::Builder> module.
+
+=item L<GNU TAR format|https://www.gnu.org/software/tar/manual/html_node/Standard.html>
+
+=back
+
+=cut
+

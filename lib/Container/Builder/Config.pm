@@ -49,3 +49,61 @@ class Container::Builder::Config {
 }
 
 1;
+__END__
+
+=encoding utf-8
+
+=pod
+
+=head1 NAME
+
+Container::Builder::Config - Class for the container Config specification.
+
+=head1 DESCRIPTION
+
+Container::Builder::Config provides a wrapper to generate a valid JSON configuration file for a Container.
+
+=head1 METHODS
+
+=over 1
+
+=item generate_config($user = 'root', $env = ['PWD=/'], $entry = [], $cmd = [], $working_dir = '/', $layers = [])
+
+Generate a JSON string for a OCI Config file. All arrays must be passed as array references. The C<layers> array must be a list of C<Container::Builder::Layer> objects.
+
+=item get_digest()
+
+Returns the SHA256 digest of the generated config.
+
+=item get_size()
+
+Returns the size (length) of the generated config.
+
+
+=back
+
+=head1 AUTHOR
+
+Adriaan Dens E<lt>adri@cpan.orgE<gt>
+
+=head1 COPYRIGHT
+
+Copyright 2026- Adriaan Dens
+
+=head1 LICENSE
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself.
+
+=head1 SEE ALSO
+
+=over
+
+=item Part of the L<Container::Builder> module.
+
+=item L<https://github.com/opencontainers/image-spec/blob/main/config.md>
+
+=back
+
+=cut
+

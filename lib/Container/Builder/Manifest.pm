@@ -44,3 +44,60 @@ class Container::Builder::Manifest {
 }
 
 1;
+__END__
+
+=encoding utf-8
+
+=pod
+
+=head1 NAME
+
+Container::Builder::Manifest - Class for the container Index specification.
+
+=head1 DESCRIPTION
+
+Container::Builder::Manifest provides a JSON file of the container Manifest.
+
+=head1 METHODS
+
+=over 1
+
+=item generate_manifest($config_digest, $config_size, $layers)
+
+Generate a JSON string for a OCI manifest file. C<$config_digest> needs to be the hex representation of the SHA256 of the config JSON file. C<$layers> is an array ref to a list of C<Container::Builder::Layer> objects.
+
+=item get_digest()
+
+Returns the SHA256 digest of the generated config.
+
+=item get_size()
+
+Returns the size (length) of the generated config.
+
+=back
+
+=head1 AUTHOR
+
+Adriaan Dens E<lt>adri@cpan.orgE<gt>
+
+=head1 COPYRIGHT
+
+Copyright 2026- Adriaan Dens
+
+=head1 LICENSE
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself.
+
+=head1 SEE ALSO
+
+=over
+
+=item Part of the L<Container::Builder> module.
+
+=item L<https://github.com/opencontainers/image-spec/blob/main/manifest.md>
+
+=back
+
+=cut
+

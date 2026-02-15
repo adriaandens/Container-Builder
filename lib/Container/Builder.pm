@@ -4,6 +4,8 @@ use v5.40;
 use feature 'class';
 no warnings 'experimental::class';
 
+our $VERSION = '0.01';
+
 use Cwd;
 use LWP::Simple;
 use IO::Uncompress::Gunzip qw(gunzip);
@@ -39,7 +41,7 @@ class Container::Builder {
 	field @groups = ();
 	field $packages; 
 
-	method parse_packages(@fields) {
+	method _parse_packages(@fields) {
 		if(!-r 'Packages') {
 			say "[+] Downloading Debian Packages";
 			$debian_pkg_hostname =~ s/[^\w\-\.]//g; # a light scrubbing on the hostname... But we still assume the caller does the scrubbing!
@@ -60,7 +62,7 @@ class Container::Builder {
 			return $deb_content;
 		}
 
-		$self->parse_packages('Filename', 'Depends') if !$packages; # lazy load on first call
+		$self->_parse_packages('Filename', 'Depends') if !$packages; # lazy load on first call
 		my $pkg = $packages->get_package($package_name);
 		return 0 if !$pkg;
 
@@ -93,7 +95,7 @@ class Container::Builder {
 
 		# Before adding the package as a layer, get the dependencies and add those
 		$deb_packages{$package_name} = 1;
-		$self->parse_packages('Filename', 'Depends') if !$packages; # lazy load on first call
+		$self->_parse_packages('Filename', 'Depends') if !$packages; # lazy load on first call
 		my $pkg = $packages->get_package($package_name);
 		say "$package_name depends on:";
 		foreach(@{$pkg->{Depends}}) {
@@ -263,3 +265,109 @@ class Container::Builder {
 }
 
 1;
+__END__
+
+=encoding utf-8
+
+=pod
+
+=head1 NAME
+
+Container::Builder - Build Container archives.
+
+=head1 SYNOPSIS
+
+  use v5.40;
+  # Insert example code
+
+=head1 DESCRIPTION
+
+Container::Builder builds a TAR archive that can be imported into Podman or Docker. It's main use is to craft specific, small containers based on Debian package (.deb) files. The type of functions to extend are similar to those that you can find in a Dockerfile. 
+
+We use a Build pattern to build the archive. Most functions return quickly, and only the C<build()> function actually creates all the layers of the container and writes the result to disk.
+
+=head1 METHODS
+
+=over 1
+
+=item new(debian_pkg_hostname => 'mirror.as35701.net', [compress_deb_tar => 1], [os_version => 'bookworm'])
+
+Create a Container::Builder object. Only the C<debian_pkg_hostname> parameter is required so you can pick a Debian mirror close to the geographical region from where the code is running. See L<https://www.debian.org/mirror/list>.
+
+C<compress_deb_tar> compresses the debian TAR archives with Gzip before storing. You're trading build speeds in for less disk space.
+
+C<os_version> controls which Debian Packages will be used to find the packages on the mirror.
+
+=item add_deb_package('libperl5.36')
+
+Add a Debian package to the container. The C<data.tar> file inside the Debian package file (C<.deb>) will be stored as a layer in the resulting container. 
+
+=item add_deb_package_from_file($filepath_deb)
+
+Add a Debian package file to the container. The C<data.tar> file inside the Debian package file (C<.deb>) will be stored as a layer in the resulting container. 
+
+=item extract_from_deb($package_name, $files_to_extract)
+
+Extract certain files from the Debian package before storing as a layer. C<$package_name> is the name of the Debian package, C<$files_to_extract> is an array ref containing a list of files to extract. Rudimentary support for globs/wildcards (only useable at the end of the string).
+
+=item add_file($file_on_disk, $location_in_ctr, $mode, $user, $group)
+
+Adds the local file C<$file_on_disk> inside the container at location C<$location_in_ctr> with the specified C<$mode>, C<$user> and C<$group>.
+
+=item add_file_from_string($data, $location_in_ctr, $mode, $user, $group)
+
+Adds the data in the scalar C<$data> to the container at location C<$location_in_ctr> with the specified C<$mode>, C<$user> and C<$group>.
+
+=item create_directory($path, $mode, $uid, $gid)
+
+Create an empty directory at C<$path> inside the container with the specified C<$mode>, C<$user> and C<$group>.
+
+=item add_user($name, $uid, $main_gid, $shell, $homedir)
+
+Add a user to the container. This puts the user inside the C</etc/passwd> file.
+
+=item add_group($name, $gid)
+
+Add a group to the container. This puts the group inside the C</etc/group> file.
+
+=item runas_user($user)
+
+Specify the user to run the entrypoint as.
+
+=item set_env($key, $value)
+
+Add a environment variable to the container definition.
+
+=item set_entry(@command_str)
+
+Set the default entrypoint of the container.
+
+=item set_work_dir($workdirectory)
+
+Set the default working directory of the container.
+
+=item build('mycontainer.tar')
+
+Build the container and write the result to the filepath specified.
+
+=back
+
+=head1 AUTHOR
+
+Adriaan Dens E<lt>adri@cpan.orgE<gt>
+
+=head1 COPYRIGHT
+
+Copyright 2026- Adriaan Dens
+
+=head1 LICENSE
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself.
+
+=head1 SEE ALSO
+
+Google distroless containers are the main inspiration for creating this module. The idea of creating minimal containers based on Debian packages comes from the Bazel build code that uses these packages to provide a minimal working container. My own examples do the same.
+
+=cut
+
