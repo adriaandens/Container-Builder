@@ -24,6 +24,7 @@ use Container::Builder::Layer::SingleFile;
 class Container::Builder {
 	field $compress_deb_tar :param = 1;
 	field $debian_pkg_hostname :param;
+	field $cache_folder :param = '';
 
 	field $os = 'debian';
 	field $arch = 'amd64';
@@ -41,9 +42,11 @@ class Container::Builder {
 	field @groups = ();
 	field $packages; 
 
+	# Podman will use the Container::Builder::Config digest as the identifier for your imported container. Users might want to have this ID.
+	field $ctr_digest = undef;
+
 	method _parse_packages(@fields) {
 		if(!-r 'Packages') {
-			say "[+] Downloading Debian Packages";
 			$debian_pkg_hostname =~ s/[^\w\-\.]//g; # a light scrubbing on the hostname... But we still assume the caller does the scrubbing!
 			die "[-] Unsupported debian" if $os_version ne 'bookworm' && $os_version ne 'trixie';
 			my $packagesgz = LWP::Simple::get("https://$debian_pkg_hostname/debian/dists/$os_version/main/binary-amd64/Packages.gz");
@@ -54,12 +57,15 @@ class Container::Builder {
 	}
 
 	method _get_deb_package($package_name) {
-		if(-r 'artifacts/' . $package_name . '.deb') {
-			local $/ = undef;
-			open(my $deb, '<', 'artifacts/' . $package_name . '.deb') or die "Cannot open artifacts/$package_name.deb\n";
-			my $deb_content = <$deb>;
-			close($deb);
-			return $deb_content;
+		if($cache_folder) {
+			my $cache_folder_ws = $cache_folder . (substr($cache_folder, -1) eq '/' ? '' : '/') # ws = with slash
+			if(-d $cache_folder_ws && -r $cache_folder_ws . $package_name . '.deb') {
+				local $/ = undef;
+				open(my $deb, '<', $cache_folder_ws . $package_name . '.deb') or die "Cannot open $cache_folder_ws$package_name.deb\n";
+				my $deb_content = <$deb>;
+				close($deb);
+				return $deb_content;
+			}
 		}
 
 		$self->_parse_packages('Filename', 'Depends') if !$packages; # lazy load on first call
@@ -68,10 +74,7 @@ class Container::Builder {
 
 		my $filepath = $pkg->{Filename};
 		my ($filename) = $filepath =~ m/([^\/]+)$/;
-		say "filename is $filename";
-		say "Filepath for package $package_name is $filepath";
 		my $url = "https://debian.inf.tu-dresden.de/debian/" . $filepath;
-		say $url;
 		my $lwp = LWP::UserAgent->new();
 		my $response = $lwp->get($url);
 		if(!$response->is_success) { # Added because my base perl LWP didn't have the https package to support https...
@@ -86,35 +89,30 @@ class Container::Builder {
 		return 0 if $deb_packages{$package_name};
 		my $package_content = $self->_get_deb_package($package_name);
 		return 0 if ! $package_content;
-		# TODO: Writing packages to disk for caching should be optional (if you're doing 1 build, caching files is useless)
-		if(!-r 'artifacts/' . $package_name . '.deb') {
-			open(my $f, '>', 'artifacts/' . $package_name . '.deb') or die "cannot open $package_name.deb\n";
-			print $f $package_content;
-			close($f);
+
+		if($cache_folder) {
+			my $cache_folder_ws = $cache_folder . (substr($cache_folder, -1) eq '/' ? '' : '/') # ws = with slash
+			if(!-r $cache_folder_ws . $package_name . '.deb') {
+				open(my $f, '>', $cache_folder_ws . $package_name . '.deb') or die "cannot open $cache_folder_ws$package_name.deb\n";
+				print $f $package_content;
+				close($f);
+			}
 		}
 
 		# Before adding the package as a layer, get the dependencies and add those
 		$deb_packages{$package_name} = 1;
 		$self->_parse_packages('Filename', 'Depends') if !$packages; # lazy load on first call
 		my $pkg = $packages->get_package($package_name);
-		say "$package_name depends on:";
 		foreach(@{$pkg->{Depends}}) {
 			if(ref eq 'ARRAY') {
-				foreach(@$_) {
-					say "\tOR Dependency: $_->{name}";
-				}
 				# TODO: there's no way we can make an intelligent decision here, we can check if any of these have already been added or not. If one of the options was already added, we can skip choosing; if none was already added, take the first one.
 				$self->add_deb_package(${$_}[0]->{name});
 			} elsif(ref eq 'HASH') {
-				say "\tDependency: " . $_->{name};
 				$self->add_deb_package($_->{name});
 			}
 		}
 
-		
-		# TODO: need to be able to pass a memory buffer here so we can skip writing to disk
-		say "Actually adding deb package: $package_name";
-		push @layers, Container::Builder::Layer::DebianPackageFile->new(comment => $package_name, file => 'artifacts/' . $package_name . '.deb', compress => $compress_deb_tar);
+		push @layers, Container::Builder::Layer::DebianPackageFile->new(comment => $package_name, data => $package_content, compress => $compress_deb_tar);
 	}
 
 	# Create a layer that adds a package to the container
@@ -138,7 +136,6 @@ class Container::Builder {
 				} else {
 					$tar_file = $tar_builder->extract_file($tar, $_);
 				}
-				say "[-] Did not find $_ in TAR file to extract" if !$tar_file;
 				$result_tar .= $tar_file;
 			}
 			$result_tar .= "\x00" x 1024; # two empty blocks
@@ -211,7 +208,7 @@ class Container::Builder {
 		$work_dir = $workdirectory;
 	}
 
-	method build($filename_result) {
+	method build($filename_result = '') {
 
 		# Make 1 layer with all the base files
 		my $tar = Container::Builder::Tar->new();
@@ -248,6 +245,7 @@ class Container::Builder {
 		my $config = Container::Builder::Config->new();
 		my $config_json = $config->generate_config($runas, \@env, \@entry, \@cmd, $work_dir, \@layers);
 		$tar->add_file('blobs/sha256/' . $config->get_digest(), $config_json, 0644, 0, 0);
+		$ctr_digest = $config->get_digest();
 
 		my $manifest = Container::Builder::Manifest->new();
 		my $manifest_json = $manifest->generate_manifest($config->get_digest(), $config->get_size(), \@layers);
@@ -258,9 +256,18 @@ class Container::Builder {
 		my $index = Container::Builder::Index->new();
 		$tar->add_file('index.json', $index->generate_index($manifest->get_digest(), $manifest->get_size()), 0644, 0, 0);
 
-		open(my $o, '>', $filename_result) or die "cannot open $filename_result\n";
-		print $o $tar->get_tar();
-		close($o);
+		if($filename_result) {
+			open(my $o, '>', $filename_result) or die "cannot open $filename_result\n";
+			print $o $tar->get_tar();
+			close($o);
+		} else {
+			return $tar->get_tar();
+		}
+	}
+
+	method get_digest() {
+		die "Run build() first" if ! $ctr_digest;
+		$ctr_digest;
 	}
 }
 
@@ -346,9 +353,15 @@ Set the default entrypoint of the container.
 
 Set the default working directory of the container.
 
+=item build()
+
 =item build('mycontainer.tar')
 
-Build the container and write the result to the filepath specified.
+Build the container and write the result to the filepath specified. If no argument is given, the entire archive is returned as a scalar from the method.
+
+=item get_digest()
+
+Returns the digest of the embedded config file in the archive. This digest is used by tools such as podman as a unique ID to your container.
 
 =back
 

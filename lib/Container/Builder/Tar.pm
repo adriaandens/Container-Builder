@@ -139,7 +139,6 @@ class Container::Builder::Tar {
 		while($filename && length($tar) > $blocks_read * 512) {
 			$blocks_read++; # skip header block
 			if(substr($filename, 0, $prefix_length) eq $filepath && $filesize > 0 && substr($filename, $prefix_length) !~ /\//) {
-				say "$filename matched wildcard $filepath";
 				my $bytes_to_read = 512; # header size
 				$bytes_to_read += 512 * int($filesize / 512);
 				$bytes_to_read += 512 if $filesize % 512;
