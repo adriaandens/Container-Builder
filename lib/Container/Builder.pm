@@ -58,7 +58,7 @@ class Container::Builder {
 
 	method _get_deb_package($package_name) {
 		if($cache_folder) {
-			my $cache_folder_ws = $cache_folder . (substr($cache_folder, -1) eq '/' ? '' : '/') # ws = with slash
+			my $cache_folder_ws = $cache_folder . (substr($cache_folder, -1) eq '/' ? '' : '/'); # ws = with slash
 			if(-d $cache_folder_ws && -r $cache_folder_ws . $package_name . '.deb') {
 				local $/ = undef;
 				open(my $deb, '<', $cache_folder_ws . $package_name . '.deb') or die "Cannot open $cache_folder_ws$package_name.deb\n";
@@ -91,7 +91,7 @@ class Container::Builder {
 		return 0 if ! $package_content;
 
 		if($cache_folder) {
-			my $cache_folder_ws = $cache_folder . (substr($cache_folder, -1) eq '/' ? '' : '/') # ws = with slash
+			my $cache_folder_ws = $cache_folder . (substr($cache_folder, -1) eq '/' ? '' : '/'); # ws = with slash
 			if(!-r $cache_folder_ws . $package_name . '.deb') {
 				open(my $f, '>', $cache_folder_ws . $package_name . '.deb') or die "cannot open $cache_folder_ws$package_name.deb\n";
 				print $f $package_content;
