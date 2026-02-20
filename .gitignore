@@ -1,0 +1,7 @@
+/Container-Builder-*
+/.build
+/_build*
+/Build
+MYMETA.*
+!META.json
+/.prove

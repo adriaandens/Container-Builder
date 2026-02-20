@@ -1,6 +1,8 @@
 Revision history for Container-Builder
 
 {{$NEXT}}
+	- Prepare for first CPAN release.
+	- Implemented rudimentary copy() function.
 
 0.05 2026-02-16 22:58:40 GMT
 	- Remove all print statements from the module.

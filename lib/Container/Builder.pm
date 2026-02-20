@@ -10,6 +10,7 @@ use Cwd;
 use LWP::Simple;
 use IO::Uncompress::Gunzip qw(gunzip);
 use DPKG::Packages::Parser;
+use Path::Class::Iterator;
 
 use Container::Builder::Tar;
 use Container::Builder::Config;
@@ -155,6 +156,40 @@ class Container::Builder {
 		push @layers, Container::Builder::Layer::SingleFile->new(comment => $location_in_ctr, data => $data, dest => $location_in_ctr, mode => $mode, user => $user, group => $group);
 	}
 
+	method copy($local_dirpath, $location_in_ctr, $mode, $user, $group) {
+		if(!-d $local_dirpath) {
+			die "Container::Builder::copy() only supports directories. Use add_file() or add_file_from_string() if you need to copy one file\n";
+		}
+		$local_dirpath .= (substr($local_dirpath, -1) eq '/' ? '' : '/');
+		my $local_basename = basename($local_dirpath);
+		my $prefix_path = $location_in_ctr;
+		if(substr($location_in_ctr, -1) eq '/') {# say "ctr location ends with /, so that means our folder $local_basename becomes a subfolder";
+			$prefix_path .= $local_basename . '/';
+		} else {
+			my $remote_basename = basename($location_in_ctr);
+			#say "ctr location doesnt end with /, so that means our folder $local_basename gets renamed to $remote_basename";
+			$prefix_path .= '/';
+		}
+
+		my $iterator = Path::Class::Iterator->new(root => $local_dirpath, follow_symlinks => 0, follow_hidden => 0);
+		my $tar = Container::Builder::Tar->new();
+		$tar->add_dir($prefix_path, $mode, $user, $group);
+		until($iterator->done) {
+			my $item = $iterator->next;
+			if($item->is_dir()) {
+				my $remote_dir = $prefix_path . substr($item, length($local_dirpath));
+				$tar->add_dir($remote_dir, 0755, $user, $group);
+			} else {
+				my $remote_file = $prefix_path . substr($item, length($local_dirpath));
+				my $mode = sprintf("%0o", (stat($item))[2] & 07777);
+				local $/ = undef;
+				open(my $file, '<', $item) or die "cannot open file $item for reading\n";
+				$tar->add_file($remote_file, <$file>, $mode, $user, $group);
+			}
+		}
+		push @layers, Container::Builder::Layer::Tar->new(comment => $local_dirpath, data => $tar->get_tar());
+	}
+
 	# Create a layer that creates a directory in the container
 	method create_directory($path, $mode, $uid, $gid) {
 		my %dir = (path => $path, mode => $mode, uid => $uid, gid => $gid);
@@ -284,8 +319,50 @@ Container::Builder - Build Container archives.
 
 =head1 SYNOPSIS
 
+  # See also the examples/ folder of this module.
   use v5.40;
-  # Insert example code
+  
+  use Container::Builder;
+  
+  my $builder = Container::Builder->new(debian_pkg_hostname => 'debian.inf.tu-dresden.de');
+  $builder->create_directory('/', 0755, 0, 0);
+  $builder->create_directory('bin/', 0755, 0, 0);
+  $builder->create_directory('tmp/', 01777, 0, 0);
+  $builder->create_directory('root/', 0700, 0, 0);
+  $builder->create_directory('home/', 0755, 0, 0);
+  $builder->create_directory('home/larry/', 0700, 1337, 1337);
+  $builder->create_directory('etc/', 0755, 0, 0);
+  $builder->create_directory('app/', 0755, 1337, 1337);
+  # C dependencies (to run a compiled executable)
+  $builder->add_deb_package('libc-bin');
+  $builder->add_deb_package('libc6');
+  $builder->add_deb_package('gcc-12-base');
+  $builder->add_deb_package('libgcc-s1');
+  $builder->add_deb_package('libgomp1');
+  $builder->add_deb_package('libstdc++6');
+  # Perl base
+  $builder->add_deb_package('libcrypt1');
+  $builder->add_deb_package('perl-base');
+  $builder->add_group('root', 0);
+  $builder->add_group('tty', 5);
+  $builder->add_group('staff', 50);
+  $builder->add_group('larry', 1337);
+  $builder->add_group('nobody', 65000);
+  $builder->add_user('root', 0, 0, '/sbin/nologin', '/root');
+  $builder->add_user('nobody', 65000, 65000, '/sbin/nologin', '/nohome');
+  $builder->add_user('larry', 1337, 1337, '/sbin/nologin', '/home/larry');
+  $builder->runas_user('larry');
+  $builder->set_env('PATH', '/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin');
+  $builder->set_work_dir('/home/larry/');
+  $builder->set_entry('perl', 'testproggie.pl');
+  my $testproggie = <<'PROG';
+  use v5.36;
+  say "Hallo vriendjes en vriendinnetjes!";
+  PROG
+  $builder->add_file_from_string($testproggie, '/home/larry/testproggie.pl', 0644, 1337, 1337); # our program
+  $builder->build('01-hello-world.tar');
+  say "Now run: podman load -i 01-hello-world.tar";
+  say "Then run: podman run " . substr($builder->get_digest(), 0, 12);
 
 =head1 DESCRIPTION
 
@@ -297,13 +374,15 @@ We use a Build pattern to build the archive. Most functions return quickly, and 
 
 =over 1
 
-=item new(debian_pkg_hostname => 'mirror.as35701.net', [compress_deb_tar => 1], [os_version => 'bookworm'])
+=item new(debian_pkg_hostname => 'mirror.as35701.net', [compress_deb_tar => 1], [os_version => 'bookworm'], [cache_folder => 'artifacts/'])
 
 Create a Container::Builder object. Only the C<debian_pkg_hostname> parameter is required so you can pick a Debian mirror close to the geographical region from where the code is running. See L<https://www.debian.org/mirror/list>.
 
 C<compress_deb_tar> compresses the debian TAR archives with Gzip before storing. You're trading build speeds in for less disk space.
 
 C<os_version> controls which Debian Packages will be used to find the packages on the mirror.
+
+When C<cache_folder> is defined, the folder will be used to store the downloaded deb packages and it will be used in subsequent runs as a cache so we don't retrieve it from the debian mirror every single time.
 
 =item add_deb_package('libperl5.36')
 
