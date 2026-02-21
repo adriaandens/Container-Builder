@@ -27,6 +27,8 @@ class Container::Builder {
 	field $compress_deb_tar :param = 1;
 	field $debian_pkg_hostname :param;
 	field $cache_folder :param = '';
+	field $enable_packages_cache :param = 0;
+	field $packages_file :param = 'Packages';
 
 	field $os = 'debian';
 	field $arch = 'amd64';
@@ -48,13 +50,20 @@ class Container::Builder {
 	field $ctr_digest = undef;
 
 	method _parse_packages(@fields) {
-		if(!-r 'Packages') {
+		if($enable_packages_cache && !-r $packages_file) { # Our cache file does not exist
 			$debian_pkg_hostname =~ s/[^\w\-\.]//g; # a light scrubbing on the hostname... But we still assume the caller does the scrubbing!
-			die "[-] Unsupported debian" if $os_version ne 'bookworm' && $os_version ne 'trixie';
 			my $packagesgz = LWP::Simple::get("https://$debian_pkg_hostname/debian/dists/$os_version/main/binary-amd64/Packages.gz");
-			IO::Uncompress::Gunzip::gunzip(\$packagesgz => 'Packages');
+			IO::Uncompress::Gunzip::gunzip(\$packagesgz => $packages_file);
+		} elsif($enable_packages_cache) { # Our cache file exists
+			$packages = DPKG::Packages::Parser->new('file' => $packages_file);
+		} elsif(!$enable_packages_cache) { # don't drop anything to disk
+			$debian_pkg_hostname =~ s/[^\w\-\.]//g; # a light scrubbing on the hostname... But we still assume the caller does the scrubbing!
+			my $packagesgz = LWP::Simple::get("https://$debian_pkg_hostname/debian/dists/$os_version/main/binary-amd64/Packages.gz");
+			my $packages_raw;
+			IO::Uncompress::Gunzip::gunzip(\$packagesgz => \$packages_raw);
+			open(my $f, '<', \$packages_raw);
+			$packages = DPKG::Packages::Parser->new(fh => $f);
 		}
-		$packages = DPKG::Packages::Parser->new('file' => 'Packages');
 		$packages->parse(@fields);
 	}
 
