@@ -10,6 +10,7 @@ use Cwd;
 use LWP::Simple;
 use IO::Uncompress::Gunzip qw(gunzip);
 use DPKG::Packages::Parser;
+use File::Basename;
 use Path::Class::Iterator;
 
 use Container::Builder::Tar;
@@ -178,13 +179,15 @@ class Container::Builder {
 			my $item = $iterator->next;
 			if($item->is_dir()) {
 				my $remote_dir = $prefix_path . substr($item, length($local_dirpath));
-				$tar->add_dir($remote_dir, 0755, $user, $group);
+				my $mode = sprintf("%0o", (stat($item))[2] & 07777);
+				$tar->add_dir($remote_dir, $mode, $user, $group);
 			} else {
 				my $remote_file = $prefix_path . substr($item, length($local_dirpath));
 				my $mode = sprintf("%0o", (stat($item))[2] & 07777);
 				local $/ = undef;
 				open(my $file, '<', $item) or die "cannot open file $item for reading\n";
-				$tar->add_file($remote_file, <$file>, $mode, $user, $group);
+				my $data = <$file>;
+				$tar->add_file($remote_file, $data, $mode, $user, $group);
 			}
 		}
 		push @layers, Container::Builder::Layer::Tar->new(comment => $local_dirpath, data => $tar->get_tar());
@@ -304,6 +307,10 @@ class Container::Builder {
 		die "Run build() first" if ! $ctr_digest;
 		$ctr_digest;
 	}
+
+	method get_layers() {
+		@layers
+	}
 }
 
 1;
@@ -404,6 +411,14 @@ Adds the local file C<$file_on_disk> inside the container at location C<$locatio
 
 Adds the data in the scalar C<$data> to the container at location C<$location_in_ctr> with the specified C<$mode>, C<$user> and C<$group>.
 
+=item copy($local_dirpath, $location_in_ctr, $mode, $user, $group)
+
+Recursively copy the C<$local_dirpath> directory into a layer of the container. The resulting path inside the container is defined by C<$location_in_ctr>. C<$mode> controls the directory permission of C<$location_in_ctr> only. Inner directories will have the permissions as on the local filesystem. All directories and files will be changed to be owned by C<$user> and C<$group>.
+
+If C<$location_in_ctr> has a slash at the end, the last directory of C<$local_dirpath> will become a subdirectory of the path C<$location_in_ctr>. Otherwise, the last directory of C<$local_dirpath> will be renamed to the last directory of C<$location_in_ctr>.
+
+For example C<copy('lib/', '/app/')> will create C</app/lib/> but C<copy('lib/', '/app')> will put all put the files and directories directly inside C</app>, there will be no C<lib> directory.
+
 =item create_directory($path, $mode, $uid, $gid)
 
 Create an empty directory at C<$path> inside the container with the specified C<$mode>, C<$user> and C<$group>.
@@ -441,6 +456,12 @@ Build the container and write the result to the filepath specified. If no argume
 =item get_digest()
 
 Returns the digest of the embedded config file in the archive. This digest is used by tools such as podman as a unique ID to your container.
+
+=item get_layers()
+
+Returns a list of C<Container::Builder::Layer> objects as currently added to the Builder. 
+
+Note: During build() extra layers can be added in the front or at the end of this list.
 
 =back
 

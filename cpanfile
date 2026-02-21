@@ -12,8 +12,10 @@ requires 'Crypt::Digest::SHA256';
 requires 'LWP::Protocol::https';
 requires 'LWP::Simple';
 requires 'LWP::UserAgent';
-requires 'DPKG::Packages::Parser';
+requires 'DPKG::Packages::Parser', '0.03'; # Need the new(fh) constructor
 requires 'JSON';
+requires 'File::Basename';
+requires 'Path::Class::Iterator';
 
 on test => sub {
 	requires 'Test::More', '0.96';
