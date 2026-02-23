@@ -2,10 +2,6 @@ use v5.40;
 
 use Container::Builder;
 
-say "This makes a distroless base with the default perl installed including some modules that contain XS and can't be fatpacked.";
-say "The idea here is to use the generated container image in your Dockerfile FROM statement and then add the necessary files and directories with your Dancer2 app.";
-say "I advise to fatpack plackup and your dancer2 app since the container can't run cpanm/cpm to install dependencies.";
-
 my $builder = Container::Builder->new(debian_pkg_hostname => 'debian.inf.tu-dresden.de');
 $builder->create_directory('/', 0755, 0, 0);
 $builder->create_directory('bin/', 0755, 0, 0);
@@ -44,11 +40,27 @@ $builder->add_group('nobody', 65000);
 $builder->add_user('root', 0, 0, '/sbin/nologin', '/root');
 $builder->add_user('nobody', 65000, 65000, '/sbin/nologin', '/nohome');
 $builder->add_user('larry', 1337, 1337, '/sbin/nologin', '/home/larry');
-$builder->runas_user('larry');
 $builder->set_env('PATH', '/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin');
+# Dancer2
+# Fatpacked files
+$builder->add_file('bin/fatpacked.app.psgi', '/app/bin/fatpacked.app.psgi', 0644, 1337, 1337);
+$builder->add_file('fatpacked.plackup', '/bin/plackup', 0644, 1337, 1337);
+# Dancer2 folders
+$builder->copy('views/', '/app/views', 0755, 1337, 1337);
+$builder->copy('public/', '/app/public', 0755, 1337, 1337);
+$builder->copy('environments/', '/app/environments', 0755, 1337, 1337);
+# Config file
+$builder->add_file('config.yml', '/app/config.yml', 0644, 1337, 1337);
+
+# TODO: Not sure why but the env is broken and it thinks /app/bin/ is the cwd
+$builder->add_file('config.yml', '/app/bin/config.yml', 0644, 1337, 1337);
+$builder->runas_user('larry');
+$builder->set_env('DANCER_ENVDIR', '/app/environments/');
+$builder->set_env('DANCER_VIEWS', '/app/views/');
+$builder->set_env('DANCER_PUBLIC', '/app/public/');
+$builder->set_env('DANCER_CONFIG_VERBOSE', '1');
 $builder->set_work_dir('/app');
-$builder->set_entry('perl');
-$builder->add_file('testproggie.pl', '/home/larry/testproggie.pl', 0644, 1337, 1337); # our program
-$builder->build('02-dancer2-base.tar');
-say "Now run: podman load -i 02-dancer2-base.tar";
-say "Then run: podman tag " . substr($builder->get_digest(), 0, 12) . " localhost/dancer2-base:latest";
+$builder->set_entry('/usr/bin/perl', '/bin/plackup', '-E', 'development', '--host', '0.0.0.0', '--port', '5000');
+$builder->build('03-dancer2.tar');
+say "Now run: podman load -i 03-dancer2.tar";
+say "Then run: podman tag " . substr($builder->get_digest(), 0, 12) . " localhost/dancer2:latest";

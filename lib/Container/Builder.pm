@@ -54,6 +54,7 @@ class Container::Builder {
 			$debian_pkg_hostname =~ s/[^\w\-\.]//g; # a light scrubbing on the hostname... But we still assume the caller does the scrubbing!
 			my $packagesgz = LWP::Simple::get("https://$debian_pkg_hostname/debian/dists/$os_version/main/binary-amd64/Packages.gz");
 			IO::Uncompress::Gunzip::gunzip(\$packagesgz => $packages_file);
+			$packages = DPKG::Packages::Parser->new('file' => $packages_file);
 		} elsif($enable_packages_cache) { # Our cache file exists
 			$packages = DPKG::Packages::Parser->new('file' => $packages_file);
 		} elsif(!$enable_packages_cache) { # don't drop anything to disk
