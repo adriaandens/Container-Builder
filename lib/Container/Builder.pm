@@ -189,11 +189,11 @@ class Container::Builder {
 			my $item = $iterator->next;
 			if($item->is_dir()) {
 				my $remote_dir = $prefix_path . substr($item, length($local_dirpath));
-				my $mode = sprintf("%0o", (stat($item))[2] & 07777);
+				my $mode = (stat($item))[2] & 07777;
 				$tar->add_dir($remote_dir, $mode, $user, $group);
 			} else {
 				my $remote_file = $prefix_path . substr($item, length($local_dirpath));
-				my $mode = sprintf("%0o", (stat($item))[2] & 07777);
+				my $mode = (stat($item))[2] & 07777;
 				local $/ = undef;
 				open(my $file, '<', $item) or die "cannot open file $item for reading\n";
 				my $data = <$file>;
@@ -391,7 +391,11 @@ We use a Build pattern to build the archive. Most functions return quickly, and 
 
 =over 1
 
-=item new(debian_pkg_hostname => 'mirror.as35701.net', [compress_deb_tar => 1], [os_version => 'bookworm'], [cache_folder => 'artifacts/'])
+=item new(debian_pkg_hostname => 'mirror.as35701.net', [compress_deb_tar => 1], [os_version => 'bookworm'], [cache_folder => 'artifacts/'], [enable_packages_cache => 0], [packages_file => 'Packages'])
+(the square brackets signify that the parameter is optional, not an array ref)
+
+	field $enable_packages_cache :param = 0;
+	field $packages_file :param = 'Packages';
 
 Create a Container::Builder object. Only the C<debian_pkg_hostname> parameter is required so you can pick a Debian mirror close to the geographical region from where the code is running. See L<https://www.debian.org/mirror/list>.
 
@@ -400,6 +404,8 @@ C<compress_deb_tar> compresses the debian TAR archives with Gzip before storing.
 C<os_version> controls which Debian Packages will be used to find the packages on the mirror.
 
 When C<cache_folder> is defined, the folder will be used to store the downloaded deb packages and it will be used in subsequent runs as a cache so we don't retrieve it from the debian mirror every single time.
+
+C<enable_packages_cache> will look for a Packages file defined by C<packages_file> option. If it doesn't exist, it will be downloaded from the Debian mirror. If it does exist, it will be read from disk instead of getting a fresh copy.
 
 =item add_deb_package('libperl5.36')
 

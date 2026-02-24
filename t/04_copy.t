@@ -41,5 +41,14 @@ my @layers = $builder->get_layers();
 	ok(grep { $_ eq './app/haha/hihi.txt' } @tar_files, 'contains ./app/haha/hihi.txt');
 	ok(grep { $_ eq './app/haha/hehe/hihi/ghehe.txt' } @tar_files, 'contains ./app/haha/hehe/hihi/ghehe.txt');
 }
+{
+	my $tar = $layers[3]->generate_artifact();
+	open(my $fh, '<', \$tar);
+	my $t = Archive::Tar->new();
+	$t->read($fh);
+	my @files = $t->get_files( './app/haha/hehe/hihi/ghehe.txt' );
+	ok(@files == 1, 'found the file');
+	ok($files[0]->{mode} == 0644, 'Mode of fle is 0644');
+}
 
 done_testing;
