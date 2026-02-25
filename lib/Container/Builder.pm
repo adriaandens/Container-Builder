@@ -387,6 +387,10 @@ Container::Builder builds a TAR archive that can be imported into Podman or Dock
 
 We use a Build pattern to build the archive. Most functions return quickly, and only the C<build()> function actually creates all the layers of the container and writes the result to disk.
 
+Look into the C<examples/> folder for some examples to make working Perl (Dancer2) images.
+
+B<Note>: This module is not production-ready! It's still in early stages of development and maturity.
+
 =head1 METHODS
 
 =over 1
