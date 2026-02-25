@@ -4,7 +4,7 @@ use v5.40;
 use feature 'class';
 no warnings 'experimental::class';
 
-our $VERSION = '0.01';
+our $VERSION = '0.06';
 
 use Cwd;
 use LWP::Simple;
