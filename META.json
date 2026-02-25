@@ -41,8 +41,9 @@
             "Archive::Tar" : "0",
             "Crypt::Digest::SHA256" : "0",
             "Cwd" : "0",
-            "DPKG::Packages::Parser" : "0",
+            "DPKG::Packages::Parser" : "0.03",
             "DateTime" : "0",
+            "File::Basename" : "0",
             "File::Copy" : "0",
             "IO::Compress::Gzip" : "0",
             "IO::Uncompress::Gunzip" : "0",
@@ -51,11 +52,14 @@
             "LWP::Protocol::https" : "0",
             "LWP::Simple" : "0",
             "LWP::UserAgent" : "0",
+            "Path::Class::Iterator" : "0",
             "perl" : "5.040"
          }
       },
       "test" : {
          "requires" : {
+            "Archive::Tar" : "0",
+            "Crypt::Digest::SHA256" : "0",
             "JSON" : "0",
             "Test::More" : "0.96"
          }
@@ -73,7 +77,7 @@
          "web" : "https://github.com/adriaandens/Container-Builder"
       }
    },
-   "version" : "0.01",
+   "version" : "0.06",
    "x_contributors" : [
       "Adriaan Dens <adriaan.dens@gmail.com>"
    ],
