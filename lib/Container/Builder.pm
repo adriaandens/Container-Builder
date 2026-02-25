@@ -4,7 +4,7 @@ use v5.40;
 use feature 'class';
 no warnings 'experimental::class';
 
-our $VERSION = '0.06';
+our $VERSION = '0.07';
 
 use Cwd;
 use LWP::Simple;
@@ -341,6 +341,7 @@ Container::Builder - Build Container archives.
   
   use Container::Builder;
   
+  # Please use a Debian mirror close to you
   my $builder = Container::Builder->new(debian_pkg_hostname => 'debian.inf.tu-dresden.de');
   $builder->create_directory('/', 0755, 0, 0);
   $builder->create_directory('bin/', 0755, 0, 0);
@@ -396,10 +397,8 @@ B<Note>: This module is not production-ready! It's still in early stages of deve
 =over 1
 
 =item new(debian_pkg_hostname => 'mirror.as35701.net', [compress_deb_tar => 1], [os_version => 'bookworm'], [cache_folder => 'artifacts/'], [enable_packages_cache => 0], [packages_file => 'Packages'])
-(the square brackets signify that the parameter is optional, not an array ref)
 
-	field $enable_packages_cache :param = 0;
-	field $packages_file :param = 'Packages';
+I<the square brackets signify that the parameter is optional, not an array ref>
 
 Create a Container::Builder object. Only the C<debian_pkg_hostname> parameter is required so you can pick a Debian mirror close to the geographical region from where the code is running. See L<https://www.debian.org/mirror/list>.
 
@@ -422,6 +421,8 @@ Add a Debian package file to the container. The C<data.tar> file inside the Debi
 =item extract_from_deb($package_name, $files_to_extract)
 
 Extract certain files from the Debian package before storing as a layer. C<$package_name> is the name of the Debian package, C<$files_to_extract> is an array ref containing a list of files to extract. Rudimentary support for globs/wildcards (only useable at the end of the string).
+
+I<This is an experimental method.>
 
 =item add_file($file_on_disk, $location_in_ctr, $mode, $user, $group)
 
@@ -500,7 +501,7 @@ it under the same terms as Perl itself.
 
 =head1 SEE ALSO
 
-Google distroless containers are the main inspiration for creating this module. The idea of creating minimal containers based on Debian packages comes from the Bazel build code that uses these packages to provide a minimal working container. My own examples do the same.
+L<Google distroless|https://github.com/GoogleContainerTools/distroless> containers are the main inspiration for creating this module. The idea of creating minimal containers based on Debian packages comes from the Bazel build code in the linked repository that uses these packages to provide a minimal working container. My own examples do the same (and were an initial experiment to see if this approach would actually work).
 
 =cut
 

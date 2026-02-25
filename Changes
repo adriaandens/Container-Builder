@@ -1,6 +1,7 @@
 Revision history for Container-Builder
 
 {{$NEXT}}
+	- Documentation update.
 
 0.06  2026-02-25 23:09:44 CET
 	- Prepare for first CPAN release.
