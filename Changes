@@ -1,6 +1,8 @@
 Revision history for Container-Builder
 
 {{$NEXT}}
+
+0.08  2026-02-28 22:28:37 CET
 	- Forgot to mention v5.40 in Directory class -> Kwalitee showed this.
 	- Forgot to update some copy pasted doc in SingleFile.
 	- Forgot to remove some old hardcoded JSON from Index instead of a hashref to JSON.
