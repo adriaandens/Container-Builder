@@ -19,9 +19,9 @@ class Container::Builder::Index {
 			schemaVersion => 2,
 			manifests => \@manifests
 		);
-		my $json = encode_json(\%index);
 		# TODO: you can annotate and pass the container name
-		return '{"schemaVersion":2,"manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:' . $manifest_digest . '","size":' . $manifest_size . '}]}'
+		my $json = encode_json(\%index);
+		return $json;
 	}
 }
 
