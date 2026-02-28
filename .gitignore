@@ -7,3 +7,4 @@ MYMETA.*
 /.prove
 /artifacts*
 /Pack*
+/.perl-version
