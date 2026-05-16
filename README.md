@@ -94,9 +94,11 @@ Look into the `examples/` folder for some examples to make working Perl (Dancer2
 
     Adds the local file `$file_on_disk` inside the container at location `$location_in_ctr` with the specified `$mode`, `$user` and `$group`.
 
-- add\_file\_from\_string($data, $location\_in\_ctr, $mode, $user, $group)
+- add\_file\_from\_string($data, $location\_in\_ctr, $mode, $user, $group, \[$compressed\])
 
     Adds the data in the scalar `$data` to the container at location `$location_in_ctr` with the specified `$mode`, `$user` and `$group`.
+
+    `$compressed` is a boolean to determine if the image layer will be compressed.
 
 - copy($local\_dirpath, $location\_in\_ctr, $mode, $user, $group)
 

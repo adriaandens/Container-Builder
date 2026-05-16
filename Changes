@@ -1,6 +1,7 @@
 Revision history for Container-Builder
 
 {{$NEXT}}
+	- Moved the digest and size calculations to the parent Layer class.
 	- Added tests for compression in SingleFile and DebianPackageFile layers.
 	- Added tests for the bugfix.
 	- Bugfix for the "diff IDs" in the Config JSON. They need to be the uncompressed digest. https://github.com/adriaandens/Container-Builder/issues/2
