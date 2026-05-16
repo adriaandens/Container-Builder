@@ -1,6 +1,8 @@
 Revision history for Container-Builder
 
 {{$NEXT}}
+
+0.11  2026-05-16 15:28:04 BST
 	- Moved the digest and size calculations to the parent Layer class.
 	- Added tests for compression in SingleFile and DebianPackageFile layers.
 	- Added tests for the bugfix.
