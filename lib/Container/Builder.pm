@@ -163,8 +163,8 @@ class Container::Builder {
 		push @layers, Container::Builder::Layer::SingleFile->new(comment => $location_in_ctr, file => $file_on_disk, dest => $location_in_ctr, mode => $mode, user => $user, group => $group);
 	}
 
-	method add_file_from_string($data, $location_in_ctr, $mode, $user, $group) {
-		push @layers, Container::Builder::Layer::SingleFile->new(comment => $location_in_ctr, data => $data, dest => $location_in_ctr, mode => $mode, user => $user, group => $group);
+	method add_file_from_string($data, $location_in_ctr, $mode, $user, $group, $compressed = 0) {
+		push @layers, Container::Builder::Layer::SingleFile->new(comment => $location_in_ctr, data => $data, dest => $location_in_ctr, mode => $mode, user => $user, group => $group, compress => $compressed);
 	}
 
 	method copy($local_dirpath, $location_in_ctr, $mode, $user, $group) {
@@ -425,9 +425,11 @@ I<This is an experimental method.>
 
 Adds the local file C<$file_on_disk> inside the container at location C<$location_in_ctr> with the specified C<$mode>, C<$user> and C<$group>.
 
-=item add_file_from_string($data, $location_in_ctr, $mode, $user, $group)
+=item add_file_from_string($data, $location_in_ctr, $mode, $user, $group, [$compressed])
 
 Adds the data in the scalar C<$data> to the container at location C<$location_in_ctr> with the specified C<$mode>, C<$user> and C<$group>.
+
+C<$compressed> is a boolean to determine if the image layer will be compressed.
 
 =item copy($local_dirpath, $location_in_ctr, $mode, $user, $group)
 
