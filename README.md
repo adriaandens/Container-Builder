@@ -138,8 +138,11 @@ Look into the `examples/` folder for some examples to make working Perl (Dancer2
 
 - build()
 - build('mycontainer.tar')
+- build(filename\_result => 'mycontainer.tar')
+- build('mycontainer.tar', 'localhost/ctr:latest')
+- build(filename\_result => 'mycontainer.tar', tag\_name => 'localhost/ctr:latest')
 
-    Build the container and write the result to the filepath specified. If no argument is given, the entire archive is returned as a scalar from the method.
+    Build the container and write the result to the filepath specified. `tag_name` sets an annotation in the Index so that other tooling knows how to tag the image container upon loading.
 
 - get\_digest()
 
